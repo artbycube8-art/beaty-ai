@@ -1,0 +1,40 @@
+/**
+ * Beauty AI SaaS — Cloudflare Worker (multi-bot Telegram platform)
+ * Client webhook:  POST /webhook/:bot_token
+ * Admin webhook:   POST /admin-webhook
+ * fal.ai callback: POST /fal-callback
+ * Cron:            every minute — polls pending fal.ai jobs
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "beauty-ai-saas",
+  "main": "src/index.js",
+  "compatibility_date": "2026-05-24",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "upload_source_maps": true,
+
+  // ─── Cron: poll fal.ai every minute for pending AI jobs ──────────────────
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+
+  // ─── Public vars ──────────────────────────────────────────────────────────
+  "vars": {
+    "WORKER_URL": "https://beauty-ai-saas.artbycube8.workers.dev"
+  },
+
+  // ─── D1 Database ──────────────────────────────────────────────────────────
+  "d1_databases": [
+    {
+      "binding": "beauty_ai_db",
+      "database_name": "beauty-ai-db",
+      "database_id": "6bdbf225-6b91-483b-96f9-a5c14061e8e2"
+    }
+  ]
+
+  // ─── Secrets (wrangler secret put <NAME>) ─────────────────────────────────
+  //   FAL_KEY          — fal.ai API key
+  //   ADMIN_BOT_TOKEN  — admin panel bot token
+  //   ADMIN_USER_ID    — your Telegram user ID
+}

@@ -605,6 +605,15 @@ async function handleUpdate(update, salon, env) {
 async function handleStandardUpdate(update, env) {
   const botToken = env.STANDARD_BOT_TOKEN;
 
+  // ── Platform admin: route to admin panel ─────────────────────────────────
+  const senderId = String(
+    (update.message ?? update.edited_message ?? update.callback_query)?.from?.id ?? ''
+  );
+  if (env.ADMIN_USER_ID && senderId === String(env.ADMIN_USER_ID)) {
+    await handleAdminUpdate(update, env);
+    return;
+  }
+
   // ── Callback queries ──────────────────────────────────────────────────────
   if (update.callback_query) {
     const cq     = update.callback_query;
@@ -893,7 +902,7 @@ async function handleB2bPackageCallback(data, botToken, chatId, env) {
   // Notify admin of the B2B lead
   const adminId = env.ADMIN_USER_ID;
   if (adminId) {
-    await sendMessage(env.ADMIN_BOT_TOKEN, adminId,
+    await sendMessage(env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN, adminId,
       `🔥 *B2B лид!*\n\nПакет: *${pkg.name}${hosting}*\nСумма: ₸${total.toLocaleString('ru')}\nChat ID: \`${chatId}\``
     );
   }
@@ -1182,7 +1191,8 @@ async function handleOwnerReceipt(message, salon, tempData, env, botToken, chatI
     { text: `✅ Выдать тариф «${tariff.name}»`, callback_data: `asgn_${salonRow.id}_${tariffKey}` },
   ]]}));
 
-  const res = await fetch(`${TELEGRAM_API}/bot${env.ADMIN_BOT_TOKEN}/sendPhoto`, {
+  const adminToken = env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN;
+  const res = await fetch(`${TELEGRAM_API}/bot${adminToken}/sendPhoto`, {
     method: 'POST',
     body  : form,
   });
@@ -1215,7 +1225,7 @@ async function assignTariff(env, salonId, tariffKey, adminChatId) {
     `🎉 *Тариф «${tariff.name}» активирован!*\n\n✅ Доступно: *${tariff.limit} генераций в месяц*\n📅 Сбрасывается 1-го числа каждого месяца\n\nВаши клиенты уже могут пользоваться ботом! 🚀`
   );
 
-  await sendMessage(env.ADMIN_BOT_TOKEN, adminChatId,
+  await sendMessage(env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN, adminChatId,
     `✅ Тариф *${tariff.name}* выдан салону *${salon.salon_name}*`
   );
 }
@@ -1730,7 +1740,7 @@ async function sendMassTrialTemplate(env, chatId) {
 
 async function handleMassTrial(message, env, chatId) {
   const fileId  = message.document.file_id;
-  const fileUrl = await getTelegramFileUrl(env.ADMIN_BOT_TOKEN, fileId);
+  const fileUrl = await getTelegramFileUrl(env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN, fileId);
   const raw     = await (await fetch(fileUrl)).text();
 
   const lines = raw.split(/\r?\n/).filter(l => l.trim());
@@ -2622,7 +2632,8 @@ async function sendAdminDocument(env, chatId, filename, content, caption = '') {
   form.append('document', new Blob([content], { type: 'text/csv; charset=utf-8' }), filename);
   if (caption) form.append('caption', caption);
 
-  const res = await fetch(`${TELEGRAM_API}/bot${env.ADMIN_BOT_TOKEN}/sendDocument`, {
+  const token = env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN;
+  const res = await fetch(`${TELEGRAM_API}/bot${token}/sendDocument`, {
     method: 'POST',
     body: form,
   });
@@ -2633,7 +2644,8 @@ async function adminSend(env, chatId, text, replyMarkup = null) {
   const body = { chat_id: chatId, text, parse_mode: 'Markdown' };
   if (replyMarkup) body.reply_markup = replyMarkup;
 
-  const res = await fetch(`${TELEGRAM_API}/bot${env.ADMIN_BOT_TOKEN}/sendMessage`, {
+  const token = env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN;
+  const res = await fetch(`${TELEGRAM_API}/bot${token}/sendMessage`, {
     method : 'POST',
     headers: { 'Content-Type': 'application/json' },
     body   : JSON.stringify(body),

@@ -36,8 +36,13 @@ const S = {
   // Salon owner tariff flow
   SALON_TARIFF_RECEIPT: 'salon_tariff_receipt',
   // B2B owner onboarding (inside Standard bot)
-  B2B_NAME  : 'b2b_name',
-  B2B_PHONE : 'b2b_phone',
+  B2B_NAME            : 'b2b_name',
+  B2B_PHONE           : 'b2b_phone',
+  // B2B payment flow
+  B2B_AWAITING_PHONE       : 'b2b_awaiting_phone',
+  B2B_AWAITING_CHEQUE      : 'b2b_awaiting_cheque',
+  B2B_CONFIRMATION_PENDING : 'b2b_confirmation_pending', // anti-spam lock after cheque sent
+  B2B_AWAITING_TOKEN       : 'b2b_awaiting_token',
 };
 
 // ─── Subscription tariffs ─────────────────────────────────────────────────────
@@ -47,6 +52,22 @@ const TARIFFS = {
   pro:   { name: 'Про',     limit: 600,  price: 24900 },
   max:   { name: 'Макс',    limit: 1200, price: 39900 },
 };
+
+const B2B_PACKAGES = {
+  b2b_pkg_mini_shared : { name: 'Мини',     price: 9900,  gens: 150,  own: false, short: 'mi_s' },
+  b2b_pkg_std_shared  : { name: 'Стандарт', price: 14900, gens: 300,  own: false, short: 'st_s' },
+  b2b_pkg_biz_shared  : { name: 'Бизнес',   price: 24900, gens: 600,  own: false, short: 'bi_s' },
+  b2b_pkg_net_shared  : { name: 'Сеть',     price: 44900, gens: 1200, own: false, short: 'ne_s' },
+  b2b_pkg_mini_own    : { name: 'Мини',     price: 34900, gens: 150,  own: true,  short: 'mi_o' },
+  b2b_pkg_std_own     : { name: 'Стандарт', price: 39900, gens: 300,  own: true,  short: 'st_o' },
+  b2b_pkg_biz_own     : { name: 'Бизнес',   price: 49900, gens: 600,  own: true,  short: 'bi_o' },
+  b2b_pkg_net_own     : { name: 'Сеть',     price: 69900, gens: 1200, own: true,  short: 'ne_o' },
+};
+
+// Reverse map: short code → full package key (for admin callback parsing)
+const PKG_SHORT = Object.fromEntries(
+  Object.entries(B2B_PACKAGES).map(([k, v]) => [v.short, k])
+);
 
 const FAL_QUEUE = 'https://queue.fal.run';
 
@@ -626,7 +647,25 @@ async function handleStandardUpdate(update, env) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ callback_query_id: cq.id }),
       });
-      await handleB2bPackageCallback(cq.data, botToken, chatId, env);
+      await handleB2bPackageCallback(cq.data, botToken, chatId, userId, env);
+      return;
+    }
+
+    // User clicked "Оплатить через Kaspi" after choosing a package
+    if (cq.data?.startsWith('b2b_pay_')) {
+      await fetch(`${TELEGRAM_API}/bot${botToken}/answerCallbackQuery`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ callback_query_id: cq.id }),
+      });
+      const pkgKey = cq.data.replace('b2b_pay_', '');
+      const pkg = B2B_PACKAGES[pkgKey];
+      if (!pkg) return;
+      await setState(env, userId, botToken, S.B2B_AWAITING_PHONE, {
+        pkg_key: pkgKey, pkg_name: pkg.name, pkg_price: pkg.price, pkg_gens: pkg.gens, pkg_is_own: pkg.own,
+      });
+      await sendMessage(botToken, chatId,
+        `📱 Введите номер телефона для выставления счета Kaspi:\n_Только цифры, например: 77001112233_`
+      );
       return;
     }
 
@@ -647,15 +686,34 @@ async function handleStandardUpdate(update, env) {
   const chatId = String(message.chat.id);
   const text   = message.text ?? '';
 
-  // ── B2B onboarding state check (before owner/client routing) ─────────────
+  // ── B2B state check (before owner/client routing) ────────────────────────
   if (!text.startsWith('/start')) {
     const stateRow = await env.beauty_ai_db
       .prepare('SELECT state, temp_data FROM user_states WHERE user_id = ? AND bot_token = ?')
       .bind(userId, botToken).first();
-    const state = stateRow?.state ?? 'start';
-    if (state === S.B2B_NAME || state === S.B2B_PHONE) {
-      await handleB2bOnboarding(message, env, userId, chatId, botToken, state,
-        JSON.parse(stateRow?.temp_data ?? '{}'));
+    const curState   = stateRow?.state ?? 'start';
+    const curTmpData = JSON.parse(stateRow?.temp_data ?? '{}');
+
+    if (curState === S.B2B_NAME || curState === S.B2B_PHONE) {
+      await handleB2bOnboarding(message, env, userId, chatId, botToken, curState, curTmpData);
+      return;
+    }
+    if (curState === S.B2B_AWAITING_PHONE) {
+      await handleB2bAwaitingPhone(message, env, userId, chatId, botToken, curTmpData);
+      return;
+    }
+    if (curState === S.B2B_AWAITING_CHEQUE) {
+      await handleB2bCheque(message, env, userId, chatId, botToken, curTmpData);
+      return;
+    }
+    if (curState === S.B2B_CONFIRMATION_PENDING) {
+      if (message.photo || message.document) {
+        await sendMessage(botToken, chatId, '⏱ Ваш чек уже отправлен на проверку. Пожалуйста, ожидайте.');
+      }
+      return;
+    }
+    if (curState === S.B2B_AWAITING_TOKEN) {
+      await handleB2bToken(message, env, userId, chatId, botToken, curTmpData);
       return;
     }
   }
@@ -701,8 +759,9 @@ async function handleStandardUpdate(update, env) {
       }
 
       // Auto-attach admin_chat_id: first person to open the link becomes the owner
+      // '0' is the sentinel for "unclaimed" (admin_chat_id is NOT NULL in DB)
       let activeSalon = salon;
-      if (!salon.admin_chat_id) {
+      if (!salon.admin_chat_id || salon.admin_chat_id === '0') {
         await env.beauty_ai_db
           .prepare('UPDATE salons SET admin_chat_id = ? WHERE id = ?')
           .bind(userId, salon.id).run();
@@ -775,7 +834,7 @@ async function createTrialSalon(env, name, phone, sourceTrack = 'direct', adminC
       VALUES (?, ?, 'trial', ?, ?, 'barber', ?, ?, 3, 3, 0, ?)
     `)
     .bind(slug, syntheticToken, name, name, phone,
-          adminChatId ? String(adminChatId) : null, sourceTrack ?? null)
+          adminChatId ? String(adminChatId) : '0', sourceTrack ?? null)
     .run();
 
   return env.beauty_ai_db.prepare('SELECT * FROM salons WHERE slug = ?').bind(slug).first();
@@ -856,14 +915,7 @@ async function showB2bTariffSelector(botToken, chatId) {
   );
 }
 
-async function handleB2bPackageCallback(data, botToken, chatId, env) {
-  const packages = {
-    b2b_pkg_mini_shared : { name: 'Мини',     price: 9900,  gens: 150,  own: false },
-    b2b_pkg_std_shared  : { name: 'Стандарт', price: 14900, gens: 300,  own: false },
-    b2b_pkg_biz_shared  : { name: 'Бизнес',   price: 24900, gens: 600,  own: false },
-    b2b_pkg_net_shared  : { name: 'Сеть',     price: 44900, gens: 1200, own: false },
-  };
-
+async function handleB2bPackageCallback(data, botToken, chatId, userId, env) {
   if (data === 'b2b_hosting_own') {
     await sendMessage(botToken, chatId,
       `🤖 *Свой бот (+₸25,000)*\n\n` +
@@ -871,41 +923,31 @@ async function handleB2bPackageCallback(data, botToken, chatId, env) {
       `Выберите пакет подписки 👇`,
       { inline_keyboard: [
         [
-          { text: '🟢 Мини · ₸34,900',      callback_data: 'b2b_pkg_mini_own'  },
-          { text: '🔵 Стандарт · ₸39,900',  callback_data: 'b2b_pkg_std_own'   },
+          { text: '🟢 Мини · ₸34,900',     callback_data: 'b2b_pkg_mini_own' },
+          { text: '🔵 Стандарт · ₸39,900', callback_data: 'b2b_pkg_std_own'  },
         ],
         [
-          { text: '🟣 Бизнес · ₸49,900',    callback_data: 'b2b_pkg_biz_own'   },
-          { text: '⭐ Сеть · ₸69,900',      callback_data: 'b2b_pkg_net_own'   },
+          { text: '🟣 Бизнес · ₸49,900',   callback_data: 'b2b_pkg_biz_own'  },
+          { text: '⭐ Сеть · ₸69,900',     callback_data: 'b2b_pkg_net_own'  },
         ],
       ]}
     );
     return;
   }
 
-  const pkg = packages[data] ?? packages[data?.replace('_own', '_shared')];
+  const pkg = B2B_PACKAGES[data];
   if (!pkg) return;
 
-  const isOwn  = data.endsWith('_own');
-  const total  = pkg.price + (isOwn ? 25000 : 0);
-  const hosting = isOwn ? ' + свой бот' : ' (в общем боте)';
+  const hosting = pkg.own ? ' + свой бот' : ' (в общем боте)';
 
   await sendMessage(botToken, chatId,
     `✅ Отличный выбор!\n\n` +
     `📦 *${pkg.name}${hosting}*\n` +
     `📊 ${pkg.gens} генераций в месяц\n` +
-    `💳 Сумма: *₸${total.toLocaleString('ru')}*\n\n` +
-    `Менеджер свяжется с вами в ближайшее время для оформления.\n\n` +
-    `_Или напишите нам прямо сейчас — мы всё настроим быстро!_`
+    `💳 Сумма: *₸${pkg.price.toLocaleString('ru')}*\n\n` +
+    `Нажмите кнопку ниже, чтобы указать номер для выставления счета Kaspi:`,
+    { inline_keyboard: [[{ text: '💳 Оплатить через Kaspi', callback_data: `b2b_pay_${data}` }]] }
   );
-
-  // Notify admin of the B2B lead
-  const adminId = env.ADMIN_USER_ID;
-  if (adminId) {
-    await sendMessage(env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN, adminId,
-      `🔥 *B2B лид!*\n\nПакет: *${pkg.name}${hosting}*\nСумма: ₸${total.toLocaleString('ru')}\nChat ID: \`${chatId}\``
-    );
-  }
 }
 
 // Returns the salon whose admin_chat_id matches chatId (Standard tier owner lookup).
@@ -924,6 +966,239 @@ async function getStandardSalonForUser(env, userId, botToken) {
   return env.beauty_ai_db
     .prepare('SELECT * FROM salons WHERE id = ?')
     .bind(user.salon_id).first();
+}
+
+// ─── B2B payment flow handlers ────────────────────────────────────────────────
+
+async function handleB2bAwaitingPhone(message, env, userId, chatId, botToken, tempData) {
+  const phone = (message.text ?? '').replace(/\D/g, '');
+  if (phone.length < 10) {
+    await sendMessage(botToken, chatId, '❌ Введите корректный номер телефона (только цифры).\n_Например: 77001112233_');
+    return;
+  }
+
+  const pkg     = B2B_PACKAGES[tempData.pkg_key];
+  const pkgName = tempData.pkg_name ?? 'выбранный пакет';
+  const price   = tempData.pkg_price ?? 0;
+
+  await setState(env, userId, botToken, S.B2B_AWAITING_CHEQUE, { ...tempData, kaspi_phone: phone });
+
+  await sendMessage(botToken, chatId,
+    `⏳ Счет на *₸${price.toLocaleString('ru')}* будет выставлен на номер *+${phone}*!\n\n` +
+    `Пожалуйста, оплатите его в приложении Kaspi и пришлите сюда *скриншот/фото чека* для активации доступа.`
+  );
+
+  // Notify admin to send Kaspi invoice
+  if (env.ADMIN_USER_ID) {
+    await sendMessage(env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN, String(env.ADMIN_USER_ID),
+      `💳 *Выставить счет Kaspi*\n\n` +
+      `Пакет: *${pkgName}${pkg?.own ? ' + свой бот' : ''}*\n` +
+      `Сумма: *₸${price.toLocaleString('ru')}*\n` +
+      `Номер: \`${phone}\`\n` +
+      `Chat ID: \`${chatId}\``
+    );
+  }
+}
+
+async function handleB2bCheque(message, env, userId, chatId, botToken, tempData) {
+  const isPhoto = !!message.photo;
+  const isDoc   = !!message.document;
+
+  if (!isPhoto && !isDoc) {
+    await sendMessage(botToken, chatId, '📸 Пришлите фото или файл (PDF) чека об оплате.');
+    return;
+  }
+
+  // Anti-spam: lock state immediately so media-group duplicates are ignored
+  await setState(env, userId, botToken, S.B2B_CONFIRMATION_PENDING, tempData);
+
+  const pkgKey  = tempData.pkg_key ?? '';
+  const pkg     = B2B_PACKAGES[pkgKey];
+  const pkgName = tempData.pkg_name ?? '—';
+  const price   = tempData.pkg_price ?? 0;
+  const phone   = tempData.kaspi_phone ?? '—';
+  const isOwn   = tempData.pkg_is_own ?? false;
+  const short   = pkg?.short ?? 'un';
+
+  const caption =
+    `🧾 *Чек об оплате*\n\n` +
+    `Пакет: *${pkgName}${isOwn ? ' + свой бот' : ''}*\n` +
+    `Сумма: ₸${price.toLocaleString('ru')}\n` +
+    `Телефон: \`${phone}\`\n` +
+    `Chat ID: \`${chatId}\``;
+
+  // callback_data: "pok:<userId>:<short>" max ~26 chars — well under 64 limit
+  const replyMarkup = JSON.stringify({ inline_keyboard: [[
+    { text: '✅ Подтвердить', callback_data: `pok:${userId}:${short}` },
+    { text: '❌ Отклонить',  callback_data: `pno:${userId}` },
+  ]]});
+
+  const adminToken = env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN;
+  const form = new FormData();
+  form.append('chat_id', String(env.ADMIN_USER_ID));
+  form.append('caption', caption);
+  form.append('parse_mode', 'Markdown');
+  form.append('reply_markup', replyMarkup);
+
+  if (isPhoto) {
+    const photo   = message.photo[message.photo.length - 1];
+    const fileUrl = await getTelegramFileUrl(botToken, photo.file_id);
+    const blob    = await (await fetch(fileUrl)).blob();
+    form.append('photo', new File([blob], 'cheque.jpg', { type: 'image/jpeg' }), 'cheque.jpg');
+    await fetch(`${TELEGRAM_API}/bot${adminToken}/sendPhoto`, { method: 'POST', body: form });
+  } else {
+    const doc     = message.document;
+    const fileUrl = await getTelegramFileUrl(botToken, doc.file_id);
+    const blob    = await (await fetch(fileUrl)).blob();
+    const fname   = doc.file_name ?? 'cheque.pdf';
+    form.append('document', new File([blob], fname, { type: doc.mime_type ?? 'application/octet-stream' }), fname);
+    await fetch(`${TELEGRAM_API}/bot${adminToken}/sendDocument`, { method: 'POST', body: form });
+  }
+
+  await sendMessage(botToken, chatId,
+    `✅ Спасибо! Чек отправлен на проверку.\n\n⏱ Это займёт не более 5 минут — ожидайте уведомления здесь.`
+  );
+}
+
+async function handleB2bToken(message, env, userId, chatId, botToken, tempData) {
+  const token = (message.text ?? '').trim();
+  if (!/^\d+:[A-Za-z0-9_-]{35,}$/.test(token)) {
+    await sendMessage(botToken, chatId,
+      '❌ Неверный формат токена.\n\nОн должен выглядеть так:\n`1234567890:AAHxxxxxxxxxxxxxxxxxxxxxxxx`\n\nПопробуйте ещё раз:'
+    );
+    return;
+  }
+
+  // Forward to admin with "Launch" button
+  const adminToken = env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN;
+  await sendMessage(adminToken, String(env.ADMIN_USER_ID),
+    `🤖 *Токен Premium-бота*\n\nChat ID: \`${chatId}\`\nПакет: *${tempData.pkg_name ?? '—'}*\n\nТокен:\n\`${token}\``,
+    { inline_keyboard: [[
+      { text: '🚀 Запустить бота клиента', callback_data: `pla:${userId}` },
+    ]]}
+  );
+
+  await setState(env, userId, botToken, S.B2B_AWAITING_TOKEN, { ...tempData, premium_token: token });
+
+  await sendMessage(botToken, chatId,
+    `✅ Токен принят!\n\nМы разворачиваем вашего персонального бота — это займёт пару минут. Ожидайте уведомления здесь. 🚀`
+  );
+}
+
+// ─── Admin B2B payment confirmation ──────────────────────────────────────────
+
+async function confirmB2bPayment(env, adminChatId, data) {
+  // data: pok:<userId>:<shortCode>  e.g. pok:8024227480:mi_s
+  const parts     = data.split(':');
+  const userId    = parts[1];
+  const shortCode = parts[2] ?? '';
+  const pkgKey    = PKG_SHORT[shortCode];
+  const pkg       = B2B_PACKAGES[pkgKey];
+  const botToken  = env.STANDARD_BOT_TOKEN;
+
+  // Look up user's state to get context
+  const stateRow = await env.beauty_ai_db
+    .prepare('SELECT temp_data FROM user_states WHERE user_id = ? AND bot_token = ?')
+    .bind(userId, botToken).first();
+  const tempData = JSON.parse(stateRow?.temp_data ?? '{}');
+
+  // Find the user's salon
+  const salon = await env.beauty_ai_db
+    .prepare('SELECT * FROM salons WHERE admin_chat_id = ?')
+    .bind(userId).first();
+
+  if (salon && pkg) {
+    const now       = new Date();
+    const paidUntil = new Date(now);
+    paidUntil.setMonth(paidUntil.getMonth() + 1);
+    const paidUntilStr = paidUntil.toISOString().slice(0, 10);
+
+    await env.beauty_ai_db
+      .prepare(`UPDATE salons
+                SET status = 'standard_active',
+                    plan_name = ?,
+                    plan_limit = ?,
+                    max_allowed_generations = ?,
+                    monthly_generations_count = 0,
+                    plan_used = 0,
+                    paid_until = ?,
+                    plan_reset_at = ?
+                WHERE id = ?`)
+      .bind(pkg.name, pkg.gens, pkg.gens, paidUntilStr, paidUntilStr, salon.id)
+      .run();
+  }
+
+  if (pkg?.own) {
+    // Premium: ask for bot token
+    await setState(env, userId, botToken, S.B2B_AWAITING_TOKEN, tempData);
+    await sendMessage(botToken, userId,
+      `🎉 *Оплата подтверждена! Пакет "${pkg.name} + свой бот" активирован.*\n\n` +
+      `Теперь настроим вашего личного бота:\n\n` +
+      `1. Откройте @BotFather\n` +
+      `2. Отправьте /newbot\n` +
+      `3. Придумайте название и username\n` +
+      `4. Скопируйте API Token и пришлите его сюда 👇`
+    );
+  } else {
+    // Shared: activate and show salon panel
+    await setState(env, userId, botToken, 'start', {});
+    await sendMessage(botToken, userId,
+      `🎉 *Оплата подтверждена! Пакет "${pkg?.name ?? 'выбранный'}" активирован.*\n\n` +
+      `Ваш ИИ-ассистент готов к работе!\n\n` +
+      `Используйте команды:\n` +
+      `• /tariff — текущий тариф и статистика\n` +
+      `• /push — рассылка клиентам`
+    );
+  }
+
+  const adminToken = env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN;
+  await sendMessage(adminToken, adminChatId, `✅ Оплата подтверждена для пользователя \`${userId}\`.`);
+}
+
+async function rejectB2bPayment(env, adminChatId, data) {
+  const userId   = data.split(':')[1];
+  const botToken = env.STANDARD_BOT_TOKEN;
+
+  await setState(env, userId, botToken, 'start', {});
+  await sendMessage(botToken, userId,
+    `❌ *Оплата не подтверждена.*\n\nПожалуйста, свяжитесь с поддержкой для уточнения деталей.`
+  );
+
+  const adminToken = env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN;
+  await sendMessage(adminToken, adminChatId, `❌ Оплата отклонена для пользователя \`${userId}\`.`);
+}
+
+async function launchB2bPremiumBot(env, adminChatId, data) {
+  const userId   = data.split(':')[1];
+  const botToken = env.STANDARD_BOT_TOKEN;
+
+  const stateRow = await env.beauty_ai_db
+    .prepare('SELECT temp_data FROM user_states WHERE user_id = ? AND bot_token = ?')
+    .bind(userId, botToken).first();
+  const tempData = JSON.parse(stateRow?.temp_data ?? '{}');
+  const premiumToken = tempData.premium_token;
+
+  if (premiumToken) {
+    // Register webhook for the new premium bot
+    const workerUrl  = env.WORKER_URL.replace(/\/$/, '');
+    const webhookUrl = `${workerUrl}/webhook/${encodeURIComponent(premiumToken)}`;
+    await fetch(`${TELEGRAM_API}/bot${premiumToken}/setWebhook`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: webhookUrl, allowed_updates: ['message', 'callback_query'] }),
+    });
+  }
+
+  await setState(env, userId, botToken, 'start', {});
+  await sendMessage(botToken, userId,
+    `🚀 *Ваш персональный бот запущен и готов к работе!*\n\n` +
+    `Клиенты теперь могут пользоваться вашим личным ботом.\n\n` +
+    `Используйте команды:\n` +
+    `• /tariff — статистика и продление\n` +
+    `• /push — рассылка клиентам`
+  );
+
+  const adminToken = env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN;
+  await sendMessage(adminToken, adminChatId, `✅ Бот клиента \`${userId}\` успешно запущен.`);
 }
 
 // ─── /start ──────────────────────────────────────────────────────────────────
@@ -1738,14 +2013,20 @@ async function handleAdminUpdate(update, env) {
         await adminSend(env, chatId, '❌ Неверный номер. Только цифры, минимум 10.');
         break;
       }
-      const salon = await createTrialSalon(env, tempData.trial_name, phone, 'admin_create');
-      const botUsername = env.STANDARD_BOT_USERNAME ?? 'qrbeatyai_bot';
-      const link = `https://t.me/${botUsername}?start=${salon.slug}`;
-      await setAdminState(env, userId, A.START, {});
-      await adminSend(env, chatId,
-        `✅ *Триал создан!*\n\n✂️ *${salon.name}*\n📱 WhatsApp: \`${phone}\`\n🔗 Ссылка для оунера:\n\`${link}\`\n\n_Когда оунер откроет ссылку, его Telegram ID автоматически привяжется._`
-      );
-      await showAdminMenu(env, chatId);
+      try {
+        const salon = await createTrialSalon(env, tempData.trial_name, phone, 'admin_create');
+        const botUsername = env.STANDARD_BOT_USERNAME ?? 'qrbeatyai_bot';
+        const link = `https://t.me/${botUsername}?start=${salon.slug}`;
+        await setAdminState(env, userId, A.START, {});
+        await adminSend(env, chatId,
+          `✅ *Триал создан!*\n\n✂️ *${salon.name}*\n📱 WhatsApp: \`${phone}\`\n🔗 Ссылка для оунера:\n\`${link}\`\n\n_Когда оунер откроет ссылку, его Telegram ID автоматически привяжется._`
+        );
+        await showAdminMenu(env, chatId);
+      } catch (err) {
+        console.error('[create_trial]', err);
+        await adminSend(env, chatId, `❌ Ошибка: \`${err.message}\``);
+        await setAdminState(env, userId, A.START, {});
+      }
       break;
     }
 
@@ -1929,6 +2210,20 @@ async function handleAdminCallback(cq, env) {
 
   if (data === 'del_cancel') {
     await adminSend(env, chatId, '✅ Удаление отменено.');
+    return;
+  }
+
+  // B2B payment confirm / reject / launch  (format: pok:<uid>:<pkg>, pno:<uid>, pla:<uid>)
+  if (data.startsWith('pok:')) {
+    await confirmB2bPayment(env, chatId, data);
+    return;
+  }
+  if (data.startsWith('pno:')) {
+    await rejectB2bPayment(env, chatId, data);
+    return;
+  }
+  if (data.startsWith('pla:')) {
+    await launchB2bPremiumBot(env, chatId, data);
     return;
   }
 

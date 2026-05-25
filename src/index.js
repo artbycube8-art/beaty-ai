@@ -282,7 +282,7 @@ async function resetMonthlyGenerations(env) {
     await sendMessage(salon.bot_token, salon.admin_chat_id,
       `🔄 *Новый месяц — лимит генераций сброшен!*\n\n` +
       `*${name}*: доступно *${max}* генераций.\n\n` +
-      `Хотите продлить или сменить тариф? Напишите /tariff`
+      `Хотите продлить или сменить тариф? Нажмите кнопку *📋 Тариф*`
     );
     console.log(`[cron] reset monthly count for salon ${salon.id}, next reset: ${nextResetStr}`);
   }
@@ -400,6 +400,50 @@ function isMonthlyLimitReached(salon) {
 }
 
 // Tariff selection keyboard — reused in multiple flows.
+function ownerMenuKeyboard() {
+  return {
+    keyboard: [
+      ['📋 Тариф', '📢 Рассылка'],
+      ['📷 QR-код клиентам'],
+    ],
+    resize_keyboard: true,
+    persistent: true,
+  };
+}
+
+async function showOwnerPanel(botToken, chatId, salon) {
+  const used  = salon.monthly_generations_count ?? salon.plan_used  ?? 0;
+  const limit = salon.max_allowed_generations   ?? salon.plan_limit ?? 0;
+  const name  = salon.plan_name ?? salon.status ?? '—';
+  await sendMessage(botToken, chatId,
+    `👤 *${salon.name ?? salon.salon_name}* — панель владельца\n\n` +
+    `📊 Тариф: *${name}* · ${used}/${limit} генераций`,
+    ownerMenuKeyboard()
+  );
+}
+
+async function sendQrCode(botToken, chatId, url) {
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(url)}`;
+  const resp  = await fetch(qrUrl);
+  if (!resp.ok) {
+    await sendMessage(botToken, chatId,
+      `🔗 *Ссылка для клиентов:*\n${url}\n\n_QR-сервис временно недоступен_`
+    );
+    return;
+  }
+  const buf  = await resp.arrayBuffer();
+  const form = new FormData();
+  form.append('chat_id', chatId);
+  form.append('photo', new Blob([buf], { type: 'image/png' }), 'qr.png');
+  form.append('caption',
+    `📷 *QR-код для клиентов*\n\n` +
+    `Распечатай и поставь на стойку, добавь в Instagram или WhatsApp.\n\n` +
+    `🔗 Ссылка: ${url}`
+  );
+  form.append('parse_mode', 'Markdown');
+  await fetch(`${TELEGRAM_API}/bot${botToken}/sendPhoto`, { method: 'POST', body: form });
+}
+
 function tariffKeyboard() {
   return { inline_keyboard: [
     [{ text: '🟢 Старт · 150 ген. · ₸9,900',   callback_data: 'stariff_start' }],
@@ -482,8 +526,8 @@ async function handleUpdate(update, salon, env) {
       return;
     }
 
-    // Active subscription — handle admin commands
-    if (message.text === '/tariff') {
+    // Active subscription — handle owner commands / buttons
+    if (message.text === '/tariff' || message.text === '📋 Тариф') {
       const used  = salon.monthly_generations_count ?? salon.plan_used  ?? 0;
       const limit = salon.max_allowed_generations   ?? salon.plan_limit ?? 0;
       const name  = salon.plan_name ?? salon.status ?? '—';
@@ -494,7 +538,7 @@ async function handleUpdate(update, salon, env) {
       return;
     }
 
-    if (message.text === '/push') {
+    if (message.text === '/push' || message.text === '📢 Рассылка') {
       await setState(env, userId, botToken, S.SALON_PUSH_TEXT, {});
       await sendMessage(botToken, chatId,
         '📢 *Рассылка клиентам*\n\nНапиши текст сообщения которое получат все клиенты:',
@@ -502,10 +546,26 @@ async function handleUpdate(update, salon, env) {
       );
       return;
     }
+
+    if (message.text === '/qr' || message.text === '📷 QR-код клиентам') {
+      const botUsername = env.STANDARD_BOT_USERNAME ?? 'qrbeatyai_bot';
+      const slug = salon.slug;
+      if (!slug) {
+        await sendMessage(botToken, chatId, '❌ У вашего салона нет ссылки для клиентов.');
+        return;
+      }
+      await sendQrCode(botToken, chatId, `https://t.me/${botUsername}?start=${slug}`);
+      return;
+    }
+
     if ([S.SALON_PUSH_TEXT, S.SALON_PUSH_BUTTONS, S.SALON_PUSH_CONFIRM].includes(state)) {
       await handleSalonPushMessage(message, salon, tempData, env, botToken, chatId, userId);
       return;
     }
+
+    // Any other message → show owner panel menu
+    await showOwnerPanel(botToken, chatId, salon);
+    return;
   }
 
   // ── Block clients: subscription expired ──
@@ -1151,10 +1211,8 @@ async function confirmB2bPayment(env, adminChatId, data) {
       : '';
     await sendMessage(botToken, userId,
       `🎉 *Оплата подтверждена! Пакет "${pkg?.name ?? 'выбранный'}" активирован.*\n\n` +
-      `Ваш ИИ-ассистент готов к работе!${linkLine}\n\n` +
-      `Команды:\n` +
-      `• /tariff — текущий тариф и статистика\n` +
-      `• /push — рассылка клиентам`
+      `Ваш ИИ-ассистент готов к работе!${linkLine}`,
+      ownerMenuKeyboard()
     );
   }
 
@@ -1198,10 +1256,8 @@ async function launchB2bPremiumBot(env, adminChatId, data) {
   await setState(env, userId, botToken, 'start', {});
   await sendMessage(botToken, userId,
     `🚀 *Ваш персональный бот запущен и готов к работе!*\n\n` +
-    `Клиенты теперь могут пользоваться вашим личным ботом.\n\n` +
-    `Используйте команды:\n` +
-    `• /tariff — статистика и продление\n` +
-    `• /push — рассылка клиентам`
+    `Клиенты теперь могут пользоваться вашим личным ботом.`,
+    ownerMenuKeyboard()
   );
 
   const adminToken = env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN;
@@ -1810,7 +1866,7 @@ async function incrementAndCheckLimit(env, botToken, chatId, salon, user, userId
         `🚨 *Лимит генераций исчерпан!*\n\n` +
         `Использовано: *${used}/${max}* генераций по ${planLabel}.\n\n` +
         `Ваши клиенты хотят примерить образы, но бот заблокирован.\n` +
-        `Срочно докупите пакет или перейдите на более высокий тариф: /tariff`
+        `Срочно докупите пакет или перейдите на более высокий тариф — нажмите *📋 Тариф*`
       );
     }
   }

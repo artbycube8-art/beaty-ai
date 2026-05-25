@@ -1951,6 +1951,7 @@ const A = {
   CREATE_TRIAL_NAME  : 'create_trial_name',
   CREATE_TRIAL_PHONE : 'create_trial_phone',
   MASS_TRIAL_WAIT    : 'mass_trial_wait',
+  SKIP_TRIAL_WAIT    : 'skip_trial_wait',
 };
 
 async function handleAdminUpdate(update, env) {
@@ -2021,7 +2022,8 @@ async function handleAdminUpdate(update, env) {
 
   // Menu buttons always work regardless of current state
   const MENU_BUTTONS = ['📋 Мои боты', '👥 Все клиенты', '📥 Экспорт базы',
-    '📢 Рассылка', '➕ Создать триал', '📄 Шаблон CSV', '📤 Загрузить CSV', '➕ Добавить бота'];
+    '📢 Рассылка', '➕ Создать триал', '⏭ Скипнуть триал', '📄 Шаблон CSV',
+    '📤 Загрузить CSV', '➕ Добавить бота'];
   if (MENU_BUTTONS.includes(message.text)) {
     await handleAdminMenuAction(message.text, env, chatId, userId);
     return;
@@ -2103,6 +2105,37 @@ async function handleAdminUpdate(update, env) {
     case A.MASS_TRIAL_WAIT:
       await adminSend(env, chatId, '📎 Пришли CSV-файл (без подписи — просто файлом).');
       break;
+
+    case A.SKIP_TRIAL_WAIT: {
+      const targetId = (message.text ?? '').trim().replace(/\D/g, '');
+      if (!targetId) {
+        await adminSend(env, chatId, '❌ Введи числовой Telegram ID владельца:');
+        break;
+      }
+      const botToken = env.STANDARD_BOT_TOKEN;
+      const salon = await env.beauty_ai_db
+        .prepare('SELECT * FROM salons WHERE admin_chat_id = ?')
+        .bind(targetId).first();
+      if (!salon) {
+        await adminSend(env, chatId,
+          `❌ Салон с ID \`${targetId}\` не найден.\n\nВладелец должен сначала открыть свою ссылку (пройти онбординг).`
+        );
+        await setAdminState(env, userId, A.START, {});
+        break;
+      }
+      const maxImages = salon.max_images ?? 3;
+      await env.beauty_ai_db
+        .prepare('UPDATE users SET image_count = ? WHERE user_id = ? AND bot_token = ?')
+        .bind(maxImages, targetId, botToken).run();
+      await setState(env, targetId, botToken, S.DONE, {});
+      await showB2bTariffSelector(botToken, targetId);
+      await setAdminState(env, userId, A.START, {});
+      await adminSend(env, chatId,
+        `✅ Триал пропущен для \`${targetId}\`.\n\n*${salon.name ?? salon.salon_name}* — им отправлен выбор тарифа.`
+      );
+      await showAdminMenu(env, chatId);
+      break;
+    }
   }
 }
 
@@ -2345,9 +2378,9 @@ async function showAdminMenu(env, chatId) {
       keyboard: [
         ['📋 Мои боты', '👥 Все клиенты'],
         ['📥 Экспорт базы', '📢 Рассылка'],
-        ['➕ Создать триал', '📄 Шаблон CSV'],
-        ['📤 Загрузить CSV', '➕ Добавить бота'],
-        ['🏠 Главное меню'],
+        ['➕ Создать триал', '⏭ Скипнуть триал'],
+        ['📄 Шаблон CSV', '📤 Загрузить CSV'],
+        ['➕ Добавить бота', '🏠 Главное меню'],
       ],
       resize_keyboard: true,
     }
@@ -2366,6 +2399,11 @@ async function handleAdminMenuAction(text, env, chatId, userId) {
   } else if (text === '➕ Создать триал') {
     await setAdminState(env, userId, A.CREATE_TRIAL_NAME, {});
     await adminSend(env, chatId, '✍️ Введи *название* барбершопа или салона:');
+  } else if (text === '⏭ Скипнуть триал') {
+    await setAdminState(env, userId, A.SKIP_TRIAL_WAIT, {});
+    await adminSend(env, chatId,
+      '⏭ *Пропустить триал владельца*\n\nВведи *Telegram ID* владельца салона:\n\n_Как узнать ID: попроси владельца написать боту `/start` и перешли мне его сообщение, или используй @userinfobot_'
+    );
   } else if (text === '📄 Шаблон CSV') {
     await sendMassTrialTemplate(env, chatId);
   } else if (text === '📤 Загрузить CSV') {

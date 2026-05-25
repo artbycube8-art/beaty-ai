@@ -526,46 +526,50 @@ async function handleUpdate(update, salon, env) {
       return;
     }
 
-    // Active subscription — handle owner commands / buttons
-    if (message.text === '/tariff' || message.text === '📋 Тариф') {
-      const used  = salon.monthly_generations_count ?? salon.plan_used  ?? 0;
-      const limit = salon.max_allowed_generations   ?? salon.plan_limit ?? 0;
-      const name  = salon.plan_name ?? salon.status ?? '—';
-      await sendMessage(botToken, chatId,
-        `📋 Тариф: *${name}* · использовано *${used}/${limit}* ген.\n\nВыберите тариф для продления:`,
-        tariffKeyboard()
-      );
-      return;
-    }
-
-    if (message.text === '/push' || message.text === '📢 Рассылка') {
-      await setState(env, userId, botToken, S.SALON_PUSH_TEXT, {});
-      await sendMessage(botToken, chatId,
-        '📢 *Рассылка клиентам*\n\nНапиши текст сообщения которое получат все клиенты:',
-        { remove_keyboard: true }
-      );
-      return;
-    }
-
-    if (message.text === '/qr' || message.text === '📷 QR-код клиентам') {
-      const botUsername = env.STANDARD_BOT_USERNAME ?? 'qrbeatyai_bot';
-      const slug = salon.slug;
-      if (!slug) {
-        await sendMessage(botToken, chatId, '❌ У вашего салона нет ссылки для клиентов.');
+    // Active subscription only — handle owner commands / buttons
+    // Trial owners fall through here and continue as clients (test-drive)
+    if (salon.status !== 'trial') {
+      if (message.text === '/tariff' || message.text === '📋 Тариф') {
+        const used  = salon.monthly_generations_count ?? salon.plan_used  ?? 0;
+        const limit = salon.max_allowed_generations   ?? salon.plan_limit ?? 0;
+        const name  = salon.plan_name ?? salon.status ?? '—';
+        await sendMessage(botToken, chatId,
+          `📋 Тариф: *${name}* · использовано *${used}/${limit}* ген.\n\nВыберите тариф для продления:`,
+          tariffKeyboard()
+        );
         return;
       }
-      await sendQrCode(botToken, chatId, `https://t.me/${botUsername}?start=${slug}`);
+
+      if (message.text === '/push' || message.text === '📢 Рассылка') {
+        await setState(env, userId, botToken, S.SALON_PUSH_TEXT, {});
+        await sendMessage(botToken, chatId,
+          '📢 *Рассылка клиентам*\n\nНапиши текст сообщения которое получат все клиенты:',
+          { remove_keyboard: true }
+        );
+        return;
+      }
+
+      if (message.text === '/qr' || message.text === '📷 QR-код клиентам') {
+        const botUsername = env.STANDARD_BOT_USERNAME ?? 'qrbeatyai_bot';
+        const slug = salon.slug;
+        if (!slug) {
+          await sendMessage(botToken, chatId, '❌ У вашего салона нет ссылки для клиентов.');
+          return;
+        }
+        await sendQrCode(botToken, chatId, `https://t.me/${botUsername}?start=${slug}`);
+        return;
+      }
+
+      if ([S.SALON_PUSH_TEXT, S.SALON_PUSH_BUTTONS, S.SALON_PUSH_CONFIRM].includes(state)) {
+        await handleSalonPushMessage(message, salon, tempData, env, botToken, chatId, userId);
+        return;
+      }
+
+      // Any other message → show owner panel menu
+      await showOwnerPanel(botToken, chatId, salon);
       return;
     }
-
-    if ([S.SALON_PUSH_TEXT, S.SALON_PUSH_BUTTONS, S.SALON_PUSH_CONFIRM].includes(state)) {
-      await handleSalonPushMessage(message, salon, tempData, env, botToken, chatId, userId);
-      return;
-    }
-
-    // Any other message → show owner panel menu
-    await showOwnerPanel(botToken, chatId, salon);
-    return;
+    // Trial: owner continues below as a regular client
   }
 
   // ── Block clients: subscription expired ──

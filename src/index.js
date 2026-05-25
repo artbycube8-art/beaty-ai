@@ -1569,7 +1569,7 @@ async function handleSalonPushMessage(message, salon, tempData, env, botToken, c
     }
     const pushButtons = [{ text: btnText, url: btnUrl }];
     await setState(env, userId, botToken, S.SALON_PUSH_CONFIRM, { ...tempData, push_buttons: pushButtons });
-    const clientCount = await getPushClientCount(env, botToken);
+    const clientCount = await getPushClientCount(env, botToken, salon.id);
     await sendMessage(botToken, chatId,
       `${buildPushPreview(tempData.push_text, pushButtons)}\n\n👥 Получат: *${clientCount}* клиентов`,
       pushConfirmKeyboard()
@@ -1584,7 +1584,7 @@ async function handleSalonPushCallback(data, salon, tempData, env, botToken, cha
     const waUrl   = `https://wa.me/${phone}`;
     const buttons = [{ text: '📲 Записаться', url: waUrl }];
     await setState(env, userId, botToken, S.SALON_PUSH_CONFIRM, { ...tempData, push_buttons: buttons });
-    const clientCount = await getPushClientCount(env, botToken);
+    const clientCount = await getPushClientCount(env, botToken, salon.id);
     await sendMessage(botToken, chatId,
       `${buildPushPreview(tempData.push_text, buttons)}\n\n👥 Получат: *${clientCount}* клиентов`,
       pushConfirmKeyboard()
@@ -1602,7 +1602,7 @@ async function handleSalonPushCallback(data, salon, tempData, env, botToken, cha
 
   if (data === 'spush_btn_none') {
     await setState(env, userId, botToken, S.SALON_PUSH_CONFIRM, { ...tempData, push_buttons: [] });
-    const clientCount = await getPushClientCount(env, botToken);
+    const clientCount = await getPushClientCount(env, botToken, salon.id);
     await sendMessage(botToken, chatId,
       `${buildPushPreview(tempData.push_text, [])}\n\n👥 Получат: *${clientCount}* клиентов`,
       pushConfirmKeyboard()
@@ -1619,7 +1619,7 @@ async function handleSalonPushCallback(data, salon, tempData, env, botToken, cha
     }
     await setState(env, userId, botToken, 'start', {});
     await sendMessage(botToken, chatId, '⏳ Рассылка отправляется...');
-    const sent = await sendSalonPush(env, botToken, push_text, push_buttons ?? []);
+    const sent = await sendSalonPush(env, botToken, push_text, push_buttons ?? [], salon.id);
     await sendMessage(botToken, chatId, `✅ Рассылка отправлена *${sent}* клиентам!`);
     return;
   }
@@ -1631,29 +1631,32 @@ async function handleSalonPushCallback(data, salon, tempData, env, botToken, cha
   }
 }
 
-async function getPushClientCount(env, botToken) {
-  const row = await env.beauty_ai_db
-    .prepare('SELECT COUNT(*) as cnt FROM users WHERE bot_token = ?')
-    .bind(botToken).first();
+async function getPushClientCount(env, botToken, salonId) {
+  const row = salonId
+    ? await env.beauty_ai_db
+        .prepare('SELECT COUNT(*) as cnt FROM users WHERE salon_id = ?')
+        .bind(salonId).first()
+    : await env.beauty_ai_db
+        .prepare('SELECT COUNT(*) as cnt FROM users WHERE bot_token = ?')
+        .bind(botToken).first();
   return row?.cnt ?? 0;
 }
 
-async function sendSalonPush(env, botToken, text, buttons) {
-  const users = await env.beauty_ai_db
-    .prepare('SELECT DISTINCT chat_id FROM pending_jobs WHERE bot_token = ?')
-    .bind(botToken).all();
-
-  // Use users table — get all who have interacted (have a phone = registered)
-  const clients = await env.beauty_ai_db
-    .prepare('SELECT DISTINCT user_id FROM users WHERE bot_token = ?')
-    .bind(botToken).all();
+async function sendSalonPush(env, botToken, text, buttons, salonId) {
+  const { results: clients } = salonId
+    ? await env.beauty_ai_db
+        .prepare('SELECT DISTINCT user_id FROM users WHERE salon_id = ?')
+        .bind(salonId).all()
+    : await env.beauty_ai_db
+        .prepare('SELECT DISTINCT user_id FROM users WHERE bot_token = ?')
+        .bind(botToken).all();
 
   const replyMarkup = buttons.length
     ? { inline_keyboard: [buttons.map(b => ({ text: b.text, url: b.url }))] }
     : null;
 
   let sent = 0;
-  for (const client of clients.results) {
+  for (const client of clients) {
     try {
       await sendMessage(botToken, client.user_id, text, replyMarkup);
       sent++;

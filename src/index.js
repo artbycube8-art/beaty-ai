@@ -705,6 +705,34 @@ async function handleStandardUpdate(update, env) {
     const chatId = String(cq.message.chat.id);
     const userId = String(cq.from.id);
 
+    // Own-bot connection choice after payment
+    if (cq.data === 'b2b_own_self' || cq.data === 'b2b_own_support') {
+      await fetch(`${TELEGRAM_API}/bot${botToken}/answerCallbackQuery`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ callback_query_id: cq.id }),
+      });
+      if (cq.data === 'b2b_own_self') {
+        await sendMessage(botToken, chatId,
+          `🔧 *Создание бота через BotFather:*\n\n` +
+          `1. Откройте @BotFather в Telegram\n` +
+          `2. Отправьте /newbot\n` +
+          `3. Введите название (например: _Барбершоп Алмас_)\n` +
+          `4. Введите username — только латиница и заканчивается на \`_bot\`\n   _(например: almas\\_barber\\_bot)_\n` +
+          `5. Скопируйте API Token и пришлите его сюда 👇`
+        );
+      } else {
+        const supportLink = env.SUPPORT_TG_LINK ?? 'https://t.me/your_support';
+        await setState(env, userId, botToken, 'start', {});
+        await sendMessage(botToken, chatId,
+          `💬 *Подключение через поддержку*\n\n` +
+          `Наш специалист создаст и подключит бота за вас.\n\n` +
+          `👉 [Написать в поддержку](${supportLink})\n\n` +
+          `_Напишите: «Хочу подключить личного бота» — вам ответят в течение нескольких часов._`
+        );
+      }
+      return;
+    }
+
     // B2B package/tariff selection callbacks
     if (cq.data?.startsWith('b2b_pkg_') || cq.data === 'b2b_hosting_own') {
       await fetch(`${TELEGRAM_API}/bot${botToken}/answerCallbackQuery`, {
@@ -1193,15 +1221,16 @@ async function confirmB2bPayment(env, adminChatId, data) {
   }
 
   if (pkg?.own) {
-    // Premium: ask for bot token
+    // Premium: let owner choose self-service or support
     await setState(env, userId, botToken, S.B2B_AWAITING_TOKEN, tempData);
     await sendMessage(botToken, userId,
       `🎉 *Оплата подтверждена! Пакет "${pkg.name} + свой бот" активирован.*\n\n` +
-      `Теперь настроим вашего личного бота:\n\n` +
-      `1. Откройте @BotFather\n` +
-      `2. Отправьте /newbot\n` +
-      `3. Придумайте название и username\n` +
-      `4. Скопируйте API Token и пришлите его сюда 👇`
+      `Отлично! Теперь нужно подключить вашего личного бота.\n\n` +
+      `Как вам удобнее?`,
+      { inline_keyboard: [[
+        { text: '🔧 Подключу сам', callback_data: 'b2b_own_self' },
+        { text: '💬 Через поддержку', callback_data: 'b2b_own_support' },
+      ]]}
     );
   } else {
     // Shared: activate and show salon panel with client link
@@ -1952,6 +1981,8 @@ const A = {
   CREATE_TRIAL_PHONE : 'create_trial_phone',
   MASS_TRIAL_WAIT    : 'mass_trial_wait',
   SKIP_TRIAL_WAIT    : 'skip_trial_wait',
+  ATTACH_BOT_OWNER   : 'attach_bot_owner',
+  ATTACH_BOT_TOKEN   : 'attach_bot_token',
 };
 
 async function handleAdminUpdate(update, env) {
@@ -2023,7 +2054,7 @@ async function handleAdminUpdate(update, env) {
   // Menu buttons always work regardless of current state
   const MENU_BUTTONS = ['📋 Мои боты', '👥 Все клиенты', '📥 Экспорт базы',
     '📢 Рассылка', '➕ Создать триал', '⏭ Скипнуть триал', '📄 Шаблон CSV',
-    '📤 Загрузить CSV', '➕ Добавить бота'];
+    '📤 Загрузить CSV', '🔗 Привязать бот', '➕ Добавить бота'];
   if (MENU_BUTTONS.includes(message.text)) {
     await handleAdminMenuAction(message.text, env, chatId, userId);
     return;
@@ -2105,6 +2136,42 @@ async function handleAdminUpdate(update, env) {
     case A.MASS_TRIAL_WAIT:
       await adminSend(env, chatId, '📎 Пришли CSV-файл (без подписи — просто файлом).');
       break;
+
+    case A.ATTACH_BOT_OWNER: {
+      const ownerId = (message.text ?? '').trim().replace(/\D/g, '');
+      if (!ownerId) {
+        await adminSend(env, chatId, '❌ Введи числовой Telegram ID владельца:');
+        break;
+      }
+      const salon = await env.beauty_ai_db
+        .prepare('SELECT id, name, salon_name FROM salons WHERE admin_chat_id = ?')
+        .bind(ownerId).first();
+      if (!salon) {
+        await adminSend(env, chatId,
+          `❌ Салон с ID \`${ownerId}\` не найден.\n\nВладелец должен сначала открыть свою ссылку.`
+        );
+        await setAdminState(env, userId, A.START, {});
+        break;
+      }
+      await setAdminState(env, userId, A.ATTACH_BOT_TOKEN, { attach_owner_id: ownerId, attach_salon_id: salon.id, attach_salon_name: salon.name ?? salon.salon_name });
+      await adminSend(env, chatId,
+        `✅ Салон: *${salon.name ?? salon.salon_name}*\n\n` +
+        `Теперь введи *токен бота* который нужно подключить:\n_(получить у @BotFather → /mybots → выбрать бота → API Token)_`
+      );
+      break;
+    }
+
+    case A.ATTACH_BOT_TOKEN: {
+      const newToken = (message.text ?? '').trim();
+      if (!/^\d+:[A-Za-z0-9_-]{35,}$/.test(newToken)) {
+        await adminSend(env, chatId, '❌ Неверный формат токена. Попробуй ещё раз:');
+        break;
+      }
+      await setAdminState(env, userId, A.START, {});
+      await attachPremiumBot(env, chatId, tempData.attach_owner_id, tempData.attach_salon_id, tempData.attach_salon_name, newToken);
+      await showAdminMenu(env, chatId);
+      break;
+    }
 
     case A.SKIP_TRIAL_WAIT: {
       const targetId = (message.text ?? '').trim().replace(/\D/g, '');
@@ -2371,6 +2438,55 @@ async function handleAdminCallback(cq, env) {
 
 // ── Admin menu ────────────────────────────────────────────────────────────────
 
+async function attachPremiumBot(env, adminChatId, ownerId, salonId, salonName, newToken) {
+  const stdToken = env.STANDARD_BOT_TOKEN;
+
+  // Validate token via Telegram API
+  const meResp = await fetch(`${TELEGRAM_API}/bot${newToken}/getMe`);
+  const meData = await meResp.json();
+  if (!meData.ok) {
+    await adminSend(env, adminChatId, `❌ Токен недействителен: ${meData.description}`);
+    return;
+  }
+  const botUsername = meData.result.username;
+
+  // Check token not already used
+  const conflict = await env.beauty_ai_db
+    .prepare('SELECT id FROM salons WHERE bot_token = ?').bind(newToken).first();
+  if (conflict) {
+    await adminSend(env, adminChatId, `❌ Этот токен уже используется другим салоном.`);
+    return;
+  }
+
+  // Register webhook
+  const workerUrl  = env.WORKER_URL.replace(/\/$/, '');
+  const webhookUrl = `${workerUrl}/webhook/${encodeURIComponent(newToken)}`;
+  await fetch(`${TELEGRAM_API}/bot${newToken}/setWebhook`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: webhookUrl, allowed_updates: ['message', 'callback_query'] }),
+  });
+
+  // Update salon bot_token to the real premium token
+  await env.beauty_ai_db
+    .prepare('UPDATE salons SET bot_token = ? WHERE id = ?')
+    .bind(newToken, salonId).run();
+
+  // Reset owner state and notify them
+  await setState(env, ownerId, stdToken, 'start', {});
+  const botLink = `https://t.me/${botUsername}`;
+  await sendMessage(stdToken, ownerId,
+    `🚀 *Ваш личный бот подключён!*\n\n` +
+    `Бот: @${botUsername}\n\n` +
+    `🔗 Ссылка для клиентов:\n\`${botLink}\`\n\n` +
+    `Поделитесь ею с клиентами — они сразу попадут к вашему боту.`,
+    ownerMenuKeyboard()
+  );
+
+  await adminSend(env, adminChatId,
+    `✅ Бот @${botUsername} привязан к *${salonName}*!\n\nВладелец \`${ownerId}\` уведомлён.`
+  );
+}
+
 async function showAdminMenu(env, chatId) {
   await adminSend(env, chatId,
     '🤖 *Панель управления Beauty AI*\n\nВыбери действие:',
@@ -2380,7 +2496,8 @@ async function showAdminMenu(env, chatId) {
         ['📥 Экспорт базы', '📢 Рассылка'],
         ['➕ Создать триал', '⏭ Скипнуть триал'],
         ['📄 Шаблон CSV', '📤 Загрузить CSV'],
-        ['➕ Добавить бота', '🏠 Главное меню'],
+        ['🔗 Привязать бот', '➕ Добавить бота'],
+        ['🏠 Главное меню'],
       ],
       resize_keyboard: true,
     }
@@ -2410,6 +2527,12 @@ async function handleAdminMenuAction(text, env, chatId, userId) {
     await setAdminState(env, userId, A.MASS_TRIAL_WAIT, {});
     await adminSend(env, chatId,
       '📎 Пришли CSV-файл со списком салонов.\n\n_Формат: Название;Телефон;Источник_\n_Нужен шаблон? Нажми *📄 Шаблон CSV*_'
+    );
+  } else if (text === '🔗 Привязать бот') {
+    await setAdminState(env, userId, A.ATTACH_BOT_OWNER, {});
+    await adminSend(env, chatId,
+      '🔗 *Привязать Premium-бот к салону*\n\n' +
+      'Введи *Telegram ID* владельца салона\n_(кому подключаем бота)_:'
     );
   } else if (text === '➕ Добавить бота') {
     await setAdminState(env, userId, A.ADD_TOKEN, {});

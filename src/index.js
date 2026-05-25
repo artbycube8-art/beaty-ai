@@ -438,7 +438,7 @@ async function sendQrCode(botToken, chatId, url) {
   form.append('caption',
     `📷 *QR-код для клиентов*\n\n` +
     `Распечатай и поставь на стойку, добавь в Instagram или WhatsApp.\n\n` +
-    `🔗 Ссылка: ${url}`
+    `🔗 Ссылка: \`${url}\``
   );
   form.append('parse_mode', 'Markdown');
   await fetch(`${TELEGRAM_API}/bot${botToken}/sendPhoto`, { method: 'POST', body: form });
@@ -1211,7 +1211,7 @@ async function confirmB2bPayment(env, adminChatId, data) {
       ? `https://t.me/${botUsername}?start=${salon.slug}`
       : null;
     const linkLine = clientLink
-      ? `\n\n🔗 *Ссылка для ваших клиентов:*\n${clientLink}\n\n_Поделитесь ею в Instagram, WhatsApp, визитках._`
+      ? `\n\n🔗 *Ссылка для ваших клиентов:*\n\`${clientLink}\`\n\n_Поделитесь ею в Instagram, WhatsApp, визитках._`
       : '';
     await sendMessage(botToken, userId,
       `🎉 *Оплата подтверждена! Пакет "${pkg?.name ?? 'выбранный'}" активирован.*\n\n` +

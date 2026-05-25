@@ -1140,12 +1140,19 @@ async function confirmB2bPayment(env, adminChatId, data) {
       `4. Скопируйте API Token и пришлите его сюда 👇`
     );
   } else {
-    // Shared: activate and show salon panel
+    // Shared: activate and show salon panel with client link
     await setState(env, userId, botToken, 'start', {});
+    const botUsername = env.STANDARD_BOT_USERNAME ?? 'qrbeatyai_bot';
+    const clientLink  = salon?.slug
+      ? `https://t.me/${botUsername}?start=${salon.slug}`
+      : null;
+    const linkLine = clientLink
+      ? `\n\n🔗 *Ссылка для ваших клиентов:*\n${clientLink}\n\n_Поделитесь ею в Instagram, WhatsApp, визитках._`
+      : '';
     await sendMessage(botToken, userId,
       `🎉 *Оплата подтверждена! Пакет "${pkg?.name ?? 'выбранный'}" активирован.*\n\n` +
-      `Ваш ИИ-ассистент готов к работе!\n\n` +
-      `Используйте команды:\n` +
+      `Ваш ИИ-ассистент готов к работе!${linkLine}\n\n` +
+      `Команды:\n` +
       `• /tariff — текущий тариф и статистика\n` +
       `• /push — рассылка клиентам`
     );

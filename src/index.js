@@ -1595,14 +1595,17 @@ async function sendOfferMessage(botToken, chatId, salon) {
 
 // Admin conversation states (stored in user_states with bot_token = 'admin')
 const A = {
-  START            : 'start',
-  ADD_TOKEN        : 'add_token',
-  ADD_NAME         : 'add_name',
-  ADD_PHONE        : 'add_phone',
-  ADD_MAX          : 'add_max',
-  ADD_DISCOUNT     : 'add_discount',
-  BROADCAST_SELECT : 'broadcast_select',
-  BROADCAST_TEXT   : 'broadcast_text',
+  START              : 'start',
+  ADD_TOKEN          : 'add_token',
+  ADD_NAME           : 'add_name',
+  ADD_PHONE          : 'add_phone',
+  ADD_MAX            : 'add_max',
+  ADD_DISCOUNT       : 'add_discount',
+  BROADCAST_SELECT   : 'broadcast_select',
+  BROADCAST_TEXT     : 'broadcast_text',
+  CREATE_TRIAL_NAME  : 'create_trial_name',
+  CREATE_TRIAL_PHONE : 'create_trial_phone',
+  MASS_TRIAL_WAIT    : 'mass_trial_wait',
 };
 
 async function handleAdminUpdate(update, env) {
@@ -1661,9 +1664,21 @@ async function handleAdminUpdate(update, env) {
     return;
   }
 
-  // Document with caption "/mass_trial" → parse CSV and generate trials
-  if (message.document && (message.caption?.trim() ?? '').startsWith('/mass_trial')) {
+  // Document upload: either in MASS_TRIAL_WAIT state or with /mass_trial caption
+  if (message.document && (
+    state === A.MASS_TRIAL_WAIT ||
+    (message.caption?.trim() ?? '').startsWith('/mass_trial')
+  )) {
     await handleMassTrial(message, env, chatId);
+    await setAdminState(env, userId, A.START, {});
+    return;
+  }
+
+  // Menu buttons always work regardless of current state
+  const MENU_BUTTONS = ['📋 Мои боты', '👥 Все клиенты', '📥 Экспорт базы',
+    '📢 Рассылка', '➕ Создать триал', '📄 Шаблон CSV', '📤 Загрузить CSV', '➕ Добавить бота'];
+  if (MENU_BUTTONS.includes(message.text)) {
+    await handleAdminMenuAction(message.text, env, chatId, userId);
     return;
   }
 
@@ -1707,6 +1722,35 @@ async function handleAdminUpdate(update, env) {
 
     case A.BROADCAST_TEXT:
       await sendBroadcast(env, chatId, userId, message.text, tempData.broadcast_target);
+      break;
+
+    case A.CREATE_TRIAL_NAME: {
+      const name = message.text?.trim();
+      if (!name) { await adminSend(env, chatId, '✍️ Введи название салона:'); break; }
+      await setAdminState(env, userId, A.CREATE_TRIAL_PHONE, { trial_name: name });
+      await adminSend(env, chatId, `✅ *${name}*\n\n📱 Введи WhatsApp-номер (только цифры):\n_Например: 77001112233_`);
+      break;
+    }
+
+    case A.CREATE_TRIAL_PHONE: {
+      const phone = message.text?.replace(/\D/g, '') ?? '';
+      if (phone.length < 10) {
+        await adminSend(env, chatId, '❌ Неверный номер. Только цифры, минимум 10.');
+        break;
+      }
+      const salon = await createTrialSalon(env, tempData.trial_name, phone, 'admin_create');
+      const botUsername = env.STANDARD_BOT_USERNAME ?? 'qrbeatyai_bot';
+      const link = `https://t.me/${botUsername}?start=${salon.slug}`;
+      await setAdminState(env, userId, A.START, {});
+      await adminSend(env, chatId,
+        `✅ *Триал создан!*\n\n✂️ *${salon.name}*\n📱 WhatsApp: \`${phone}\`\n🔗 Ссылка для оунера:\n\`${link}\`\n\n_Когда оунер откроет ссылку, его Telegram ID автоматически привяжется._`
+      );
+      await showAdminMenu(env, chatId);
+      break;
+    }
+
+    case A.MASS_TRIAL_WAIT:
+      await adminSend(env, chatId, '📎 Пришли CSV-файл (без подписи — просто файлом).');
       break;
   }
 }
@@ -1936,7 +1980,8 @@ async function showAdminMenu(env, chatId) {
       keyboard: [
         ['📋 Мои боты', '👥 Все клиенты'],
         ['📥 Экспорт базы', '📢 Рассылка'],
-        ['➕ Добавить бота'],
+        ['➕ Создать триал', '📄 Шаблон CSV'],
+        ['📤 Загрузить CSV', '➕ Добавить бота'],
         ['🏠 Главное меню'],
       ],
       resize_keyboard: true,
@@ -1953,6 +1998,16 @@ async function handleAdminMenuAction(text, env, chatId, userId) {
     await exportClients(env, chatId);
   } else if (text === '📢 Рассылка') {
     await startBroadcast(env, chatId, userId);
+  } else if (text === '➕ Создать триал') {
+    await setAdminState(env, userId, A.CREATE_TRIAL_NAME, {});
+    await adminSend(env, chatId, '✍️ Введи *название* барбершопа или салона:');
+  } else if (text === '📄 Шаблон CSV') {
+    await sendMassTrialTemplate(env, chatId);
+  } else if (text === '📤 Загрузить CSV') {
+    await setAdminState(env, userId, A.MASS_TRIAL_WAIT, {});
+    await adminSend(env, chatId,
+      '📎 Пришли CSV-файл со списком салонов.\n\n_Формат: Название;Телефон;Источник_\n_Нужен шаблон? Нажми *📄 Шаблон CSV*_'
+    );
   } else if (text === '➕ Добавить бота') {
     await setAdminState(env, userId, A.ADD_TOKEN, {});
     await adminSend(env, chatId,

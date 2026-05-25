@@ -21,7 +21,8 @@
 
   // ─── Public vars ──────────────────────────────────────────────────────────
   "vars": {
-    "WORKER_URL": "https://beauty-ai-saas.artbycube8.workers.dev"
+    "WORKER_URL": "https://beauty-ai-saas.artbycube8.workers.dev",
+    "STANDARD_BOT_USERNAME": "qrbeatyai_bot"
   },
 
   // ─── D1 Database ──────────────────────────────────────────────────────────

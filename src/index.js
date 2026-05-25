@@ -35,6 +35,9 @@ const S = {
   SALON_PUSH_CONFIRM : 'salon_push_confirm',
   // Salon owner tariff flow
   SALON_TARIFF_RECEIPT: 'salon_tariff_receipt',
+  // B2B owner onboarding (inside Standard bot)
+  B2B_NAME  : 'b2b_name',
+  B2B_PHONE : 'b2b_phone',
 };
 
 // ─── Subscription tariffs ─────────────────────────────────────────────────────
@@ -121,7 +124,13 @@ export default {
 
     const botToken = decodeURIComponent(match[1]);
 
-    // Validate bot token against D1 — unknown tokens are silently ignored
+    // ── Standard tier: one shared bot, salon resolved by slug in deep-link ──
+    if (env.STANDARD_BOT_TOKEN && botToken === env.STANDARD_BOT_TOKEN) {
+      ctx.waitUntil(handleStandardUpdate(update, env));
+      return new Response('OK');
+    }
+
+    // ── Premium tier: each salon has its own bot token ──
     const salon = await env.beauty_ai_db
       .prepare('SELECT * FROM salons WHERE bot_token = ?')
       .bind(botToken)
@@ -134,10 +143,11 @@ export default {
     return new Response('OK');
   },
 
-  // Runs every minute via Cron trigger — polls fal.ai for completed jobs
+  // Runs every minute via Cron trigger
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(pollPendingJobs(env));
-    ctx.waitUntil(resetMonthlyPlans(env));
+    ctx.waitUntil(pollPendingJobs(env));           // every minute: deliver completed fal.ai jobs
+    ctx.waitUntil(checkExpiredSubscriptions(env)); // daily: mark expired, notify owners
+    ctx.waitUntil(resetMonthlyGenerations(env));   // 1st of month: reset monthly counters
   },
 };
 
@@ -194,27 +204,66 @@ async function pollPendingJobs(env) {
   }
 }
 
-// ─── Monthly plan reset ───────────────────────────────────────────────────────
-async function resetMonthlyPlans(env) {
-  const { results: expired } = await env.beauty_ai_db
-    .prepare(`SELECT * FROM salons WHERE plan_limit > 0 AND plan_reset_at IS NOT NULL AND plan_reset_at <= date('now')`)
+// ─── Daily: mark expired subscriptions, notify owners ────────────────────────
+async function checkExpiredSubscriptions(env) {
+  const { results: lapsed } = await env.beauty_ai_db
+    .prepare(`
+      SELECT * FROM salons
+      WHERE paid_until IS NOT NULL
+        AND paid_until < date('now')
+        AND status IN ('standard_active', 'premium_active')
+    `)
     .all();
 
-  for (const salon of expired) {
+  for (const salon of lapsed) {
+    await env.beauty_ai_db
+      .prepare("UPDATE salons SET status = 'expired' WHERE id = ?")
+      .bind(salon.id).run();
+
+    const name = salon.name || salon.salon_name || 'Ваш салон';
+    await sendMessage(salon.bot_token, salon.admin_chat_id,
+      `⚠️ *Подписка истекла — бот приостановлен!*\n\n` +
+      `Работа ИИ-ассистента *${name}* остановлена.\n` +
+      `Клиенты не могут примерять образы.\n\n` +
+      `Продлите подписку для возобновления работы:`,
+      tariffKeyboard()
+    );
+    console.log(`[cron] expired salon ${salon.id} (${name}), paid_until=${salon.paid_until}`);
+  }
+}
+
+// ─── 1st of month: reset monthly generation counters ─────────────────────────
+async function resetMonthlyGenerations(env) {
+  const { results: due } = await env.beauty_ai_db
+    .prepare(`
+      SELECT * FROM salons
+      WHERE plan_reset_at IS NOT NULL
+        AND plan_reset_at <= date('now')
+        AND status IN ('standard_active', 'premium_active', 'trial')
+    `)
+    .all();
+
+  for (const salon of due) {
     const nextReset = new Date(salon.plan_reset_at);
     nextReset.setUTCMonth(nextReset.getUTCMonth() + 1);
     const nextResetStr = nextReset.toISOString().slice(0, 10);
 
     await env.beauty_ai_db
-      .prepare('UPDATE salons SET plan_used = 0, plan_reset_at = ? WHERE id = ?')
+      .prepare(`UPDATE salons
+                SET monthly_generations_count = 0,
+                    plan_used = 0,
+                    plan_reset_at = ?
+                WHERE id = ?`)
       .bind(nextResetStr, salon.id).run();
 
-    // Renewal reminder to salon owner
+    const name = salon.name || salon.salon_name || 'Ваш салон';
+    const max  = salon.max_allowed_generations || salon.plan_limit || 0;
     await sendMessage(salon.bot_token, salon.admin_chat_id,
-      `🔄 *Новый месяц — лимит сброшен!*\n\n` +
-      `Тариф *${salon.plan_name}*: доступно *${salon.plan_limit}* новых генераций.\n\n` +
+      `🔄 *Новый месяц — лимит генераций сброшен!*\n\n` +
+      `*${name}*: доступно *${max}* генераций.\n\n` +
       `Хотите продлить или сменить тариф? Напишите /tariff`
     );
+    console.log(`[cron] reset monthly count for salon ${salon.id}, next reset: ${nextResetStr}`);
   }
 }
 
@@ -238,14 +287,19 @@ async function deleteFalPayload(requestId, falKey) {
 }
 
 async function deliverFalResult(job, imageUrl, env) {
-  const salon = await env.beauty_ai_db
-    .prepare('SELECT * FROM salons WHERE bot_token = ?')
-    .bind(job.bot_token).first();
+  // For Standard-tier: look up by salon_id (FK); Premium: fall back to bot_token
+  const salon = job.salon_id
+    ? await env.beauty_ai_db.prepare('SELECT * FROM salons WHERE id = ?').bind(job.salon_id).first()
+    : await env.beauty_ai_db.prepare('SELECT * FROM salons WHERE bot_token = ?').bind(job.bot_token).first();
+
   const user = await env.beauty_ai_db
     .prepare('SELECT * FROM users WHERE user_id = ? AND bot_token = ?')
     .bind(job.user_id, job.bot_token).first();
 
   if (!salon || !user) return;
+
+  // Standard-tier salons have a synthetic bot_token — use the real Telegram token
+  const tgToken = isValidTgToken(salon.bot_token) ? salon.bot_token : env.STANDARD_BOT_TOKEN;
 
   const resultLine  = {
     barber: '🎉 Вот твоя новая причёска!',
@@ -259,19 +313,19 @@ async function deliverFalResult(job, imageUrl, env) {
   };
   const retryStates = { barber: S.WAITING_SELFIE, makeup: S.WAITING_FACE, nails: S.WAITING_HAND };
 
+  const salonTitle  = salon.name || salon.salon_name || 'салон';
   const discCaption = salon.discount
-    ? `💡 Нравится? Запишись в *${salon.salon_name}* со скидкой ${salon.discount}%!`
-    : `💡 Нравится? Запишись в *${salon.salon_name}*!`;
-  await sendPhotoFile(salon.bot_token, job.chat_id, imageUrl,
+    ? `💡 Нравится? Запишись в *${salonTitle}* со скидкой ${salon.discount}%!`
+    : `💡 Нравится? Запишись в *${salonTitle}*!`;
+  await sendPhotoFile(tgToken, job.chat_id, imageUrl,
     `${resultLine[salon.salon_type] ?? '🎉 Готово!'}\n\n${discCaption}`,
     env.FAL_KEY
   );
 
-  // Delete from fal.ai immediately after delivery — user photos stay private
   await deleteFalPayload(job.request_id, env.FAL_KEY);
 
   await incrementAndCheckLimit(
-    env, salon.bot_token, job.chat_id, salon, user, job.user_id, salon.max_images,
+    env, tgToken, job.chat_id, salon, user, job.user_id, salon.max_images,
     retryTexts[salon.salon_type]  ?? '🔄 Попробуй ещё раз!',
     retryStates[salon.salon_type] ?? S.WAITING_SELFIE
   );
@@ -286,6 +340,52 @@ async function notifyJobError(job, env) {
   );
   const resetState = { barber: S.WAITING_SELFIE, makeup: S.WAITING_FACE, nails: S.WAITING_HAND };
   await setState(env, job.user_id, job.bot_token, resetState[salon?.salon_type] ?? S.WAITING_SELFIE, {});
+}
+
+// ─── Slug / token helpers ─────────────────────────────────────────────────────
+
+// Real Telegram bot tokens look like "1234567890:AAHxx..."
+function isValidTgToken(token) {
+  return /^\d+:[A-Za-z0-9_-]{35,}$/.test(token ?? '');
+}
+
+// Generates a URL-safe slug from a salon name + 4-char random suffix.
+function generateSlug(name) {
+  const base = (name || 'salon')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .trim()
+    .replace(/\s+/g, '_')
+    .slice(0, 12)
+    .replace(/_+$/, '') || 'salon';
+  const hash = Math.random().toString(36).slice(2, 6);
+  return `${base}_${hash}`;
+}
+
+// ─── Subscription helpers ─────────────────────────────────────────────────────
+
+// Trial salons (no paid_until) are never expired — they run until limit is hit.
+function isSubscriptionExpired(salon) {
+  if (salon.status === 'expired') return true;
+  if (!salon.paid_until) return false;
+  return new Date().toISOString().slice(0, 10) > salon.paid_until;
+}
+
+// Returns true if the salon-level monthly generation cap is exhausted.
+function isMonthlyLimitReached(salon) {
+  const max  = salon.max_allowed_generations ?? salon.plan_limit  ?? 0;
+  const used = salon.monthly_generations_count ?? salon.plan_used ?? 0;
+  return max > 0 && used >= max;
+}
+
+// Tariff selection keyboard — reused in multiple flows.
+function tariffKeyboard() {
+  return { inline_keyboard: [
+    [{ text: '🟢 Старт · 150 ген. · ₸9,900',   callback_data: 'stariff_start' }],
+    [{ text: '🔵 Базовый · 300 ген. · ₸14,900', callback_data: 'stariff_basic' }],
+    [{ text: '🟣 Про · 600 ген. · ₸24,900',     callback_data: 'stariff_pro'   }],
+    [{ text: '⭐ Макс · 1200 ген. · ₸39,900',   callback_data: 'stariff_max'   }],
+  ]};
 }
 
 // ─── Main update dispatcher ───────────────────────────────────────────────────
@@ -329,42 +429,46 @@ async function handleUpdate(update, salon, env) {
   // ── Salon owner admin panel ──
   if (chatId === String(salon.admin_chat_id)) {
 
-    // Receipt photo: always intercept first regardless of plan status
+    // Receipt upload always goes through regardless of subscription status
     if (message.photo && state === S.SALON_TARIFF_RECEIPT) {
       await handleOwnerReceipt(message, salon, tempData, env, botToken, chatId, userId);
       return;
     }
 
-    // No active plan — show tariff screen for ANY message
-    if (!salon.plan_name) {
+    // Subscription expired — show warning + renewal buttons for every owner message
+    if (isSubscriptionExpired(salon)) {
+      await sendMessage(botToken, chatId,
+        `⚠️ *Ваша подписка истекла!*\n\n` +
+        `Работа вашего ИИ-ассистента приостановлена.\n` +
+        `Клиенты не могут примерять образы.\n\n` +
+        `Продлите подписку на следующий месяц для возобновления работы:`,
+        tariffKeyboard()
+      );
+      return;
+    }
+
+    // No subscription yet (fresh, non-trial) — prompt to activate
+    // Trial salons skip this: the owner goes through as a client for the test-drive
+    if (!salon.plan_name && !salon.paid_until && salon.status !== 'trial') {
       await sendMessage(botToken, chatId,
         '🔒 *Нет активной подписки*\n\nВыберите тариф чтобы активировать бота:\n\n' +
         '🟢 Старт — 150 ген./мес — ₸9,900\n' +
         '🔵 Базовый — 300 ген./мес — ₸14,900\n' +
         '🟣 Про — 600 ген./мес — ₸24,900\n' +
         '⭐ Макс — 1200 ген./мес — ₸39,900',
-        { inline_keyboard: [
-          [{ text: '🟢 Старт · 150 ген. · ₸9,900',   callback_data: 'stariff_start' }],
-          [{ text: '🔵 Базовый · 300 ген. · ₸14,900', callback_data: 'stariff_basic' }],
-          [{ text: '🟣 Про · 600 ген. · ₸24,900',     callback_data: 'stariff_pro'   }],
-          [{ text: '⭐ Макс · 1200 ген. · ₸39,900',   callback_data: 'stariff_max'   }],
-        ]}
+        tariffKeyboard()
       );
       return;
     }
 
-    // Has active plan — handle admin commands
+    // Active subscription — handle admin commands
     if (message.text === '/tariff') {
-      const used  = salon.plan_used  ?? 0;
-      const limit = salon.plan_limit ?? 0;
+      const used  = salon.monthly_generations_count ?? salon.plan_used  ?? 0;
+      const limit = salon.max_allowed_generations   ?? salon.plan_limit ?? 0;
+      const name  = salon.plan_name ?? salon.status ?? '—';
       await sendMessage(botToken, chatId,
-        `📋 Текущий тариф: *${salon.plan_name}* · использовано *${used}/${limit}* ген.\n\nВыберите новый тариф для продления:`,
-        { inline_keyboard: [
-          [{ text: '🟢 Старт · 150 ген. · ₸9,900',   callback_data: 'stariff_start' }],
-          [{ text: '🔵 Базовый · 300 ген. · ₸14,900', callback_data: 'stariff_basic' }],
-          [{ text: '🟣 Про · 600 ген. · ₸24,900',     callback_data: 'stariff_pro'   }],
-          [{ text: '⭐ Макс · 1200 ген. · ₸39,900',   callback_data: 'stariff_max'   }],
-        ]}
+        `📋 Тариф: *${name}* · использовано *${used}/${limit}* ген.\n\nВыберите тариф для продления:`,
+        tariffKeyboard()
       );
       return;
     }
@@ -383,10 +487,24 @@ async function handleUpdate(update, salon, env) {
     }
   }
 
-  // ── Block clients when no active plan or limit exhausted ──
-  if (!salon.plan_name || (salon.plan_used ?? 0) >= (salon.plan_limit ?? 0)) {
+  // ── Block clients: subscription expired ──
+  if (isSubscriptionExpired(salon)) {
     if (message.text === '/start') {
-      await sendMessage(botToken, chatId, '⏸ Бот временно недоступен. Попробуйте позже.');
+      await sendMessage(botToken, chatId,
+        '⏸ Извините, в данный момент сервис в этом салоне временно недоступен. ' +
+        'Пожалуйста, обратитесь к администратору салона.'
+      );
+    }
+    return;
+  }
+
+  // ── Block clients: monthly limit exhausted ──
+  if (isMonthlyLimitReached(salon)) {
+    if (message.text === '/start') {
+      await sendMessage(botToken, chatId,
+        '⏸ Извините, на этот месяц лимит бесплатных примерок в данном салоне исчерпан. ' +
+        'Сервис возобновит работу в начале следующего месяца.'
+      );
     }
     return;
   }
@@ -460,7 +578,343 @@ async function handleUpdate(update, salon, env) {
     await sendMessage(botToken, chatId,
       '⏳ Твой результат уже генерируется! Пришлю, как только будет готово — обычно 30–60 секунд.'
     );
+  } else if (state === S.DONE) {
+    // User finished all free tries — push them to the booking CTA
+    await sendOfferMessage(botToken, chatId, salon);
+  } else {
+    // Unknown state or 'start' — redirect to /start, no conversation
+    const hints = {
+      barber: '✂️ Нажми /start чтобы примерить причёску!',
+      makeup: '💄 Нажми /start чтобы примерить макияж!',
+      nails:  '💅 Нажми /start чтобы примерить маникюр!',
+    };
+    await sendMessage(botToken, chatId, hints[salon.salon_type] ?? '👋 Нажми /start чтобы начать!');
   }
+}
+
+// ─── Standard tier routing ────────────────────────────────────────────────────
+// One shared bot (STANDARD_BOT_TOKEN) serves all Standard-plan and trial salons.
+//
+// Routing priority:
+//   1. User is in B2B onboarding (state = b2b_name / b2b_phone) → onboarding handler
+//   2. Sender is a known owner (admin_chat_id in salons) → owner admin panel
+//   3. /start b2b_<source>  → start B2B test-drive flow
+//   4. /start <slug>        → associate user with salon, set admin_chat_id if unclaimed
+//   5. /start (no slug)     → resume if already associated
+//   6. Any other message    → route via stored salon_id
+async function handleStandardUpdate(update, env) {
+  const botToken = env.STANDARD_BOT_TOKEN;
+
+  // ── Callback queries ──────────────────────────────────────────────────────
+  if (update.callback_query) {
+    const cq     = update.callback_query;
+    const chatId = String(cq.message.chat.id);
+    const userId = String(cq.from.id);
+
+    // B2B package/tariff selection callbacks
+    if (cq.data?.startsWith('b2b_pkg_') || cq.data === 'b2b_hosting_own') {
+      await fetch(`${TELEGRAM_API}/bot${botToken}/answerCallbackQuery`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ callback_query_id: cq.id }),
+      });
+      await handleB2bPackageCallback(cq.data, botToken, chatId, env);
+      return;
+    }
+
+    const ownerSalon = await findStandardOwnerSalon(env, chatId);
+    if (ownerSalon) {
+      await handleSalonCallback(cq, { ...ownerSalon, bot_token: botToken }, env);
+      return;
+    }
+    const salon = await getStandardSalonForUser(env, userId, botToken);
+    if (salon) await handleSalonCallback(cq, { ...salon, bot_token: botToken }, env);
+    return;
+  }
+
+  const message = update.message || update.edited_message;
+  if (!message) return;
+
+  const userId = String(message.from.id);
+  const chatId = String(message.chat.id);
+  const text   = message.text ?? '';
+
+  // ── B2B onboarding state check (before owner/client routing) ─────────────
+  if (!text.startsWith('/start')) {
+    const stateRow = await env.beauty_ai_db
+      .prepare('SELECT state, temp_data FROM user_states WHERE user_id = ? AND bot_token = ?')
+      .bind(userId, botToken).first();
+    const state = stateRow?.state ?? 'start';
+    if (state === S.B2B_NAME || state === S.B2B_PHONE) {
+      await handleB2bOnboarding(message, env, userId, chatId, botToken, state,
+        JSON.parse(stateRow?.temp_data ?? '{}'));
+      return;
+    }
+  }
+
+  // ── Known salon owner ─────────────────────────────────────────────────────
+  const ownerSalon = await findStandardOwnerSalon(env, chatId);
+  if (ownerSalon) {
+    await handleUpdate(update, { ...ownerSalon, bot_token: botToken }, env);
+    return;
+  }
+
+  // ── /start handling ───────────────────────────────────────────────────────
+  if (text.startsWith('/start')) {
+    const slug = text.length > 6 ? text.slice(7).trim() : '';
+
+    if (slug) {
+      // B2B lead link: ?start=b2b_almaty, ?start=b2b_instagram, ?start=b2b_direct
+      if (slug.startsWith('b2b_')) {
+        await env.beauty_ai_db
+          .prepare('INSERT OR IGNORE INTO users (user_id, bot_token, image_count) VALUES (?, ?, 0)')
+          .bind(userId, botToken).run();
+        await setState(env, userId, botToken, S.B2B_NAME, { source_track: slug });
+        await sendMessage(botToken, chatId,
+          `👋 Привет! Я помогу подключить ИИ-ассистента для вашего барбершопа или салона.\n\n` +
+          `*За 3 минуты вы увидите как это работает изнутри.*\n\n` +
+          `🎯 Как происходит:\n` +
+          `1. Вводите данные салона\n` +
+          `2. Делаете 3 тестовые генерации как ваш клиент\n` +
+          `3. Выбираете пакет подписки\n\n` +
+          `✍️ Введите *название* вашего салона или барбершопа:`
+        );
+        return;
+      }
+
+      // Pre-created trial or Standard salon
+      const salon = await env.beauty_ai_db
+        .prepare("SELECT * FROM salons WHERE slug = ? AND status IN ('standard_active','trial')")
+        .bind(slug).first();
+
+      if (!salon) {
+        await sendMessage(botToken, chatId, '❌ Ссылка недействительна. Обратитесь к менеджеру.');
+        return;
+      }
+
+      // Auto-attach admin_chat_id: first person to open the link becomes the owner
+      let activeSalon = salon;
+      if (!salon.admin_chat_id) {
+        await env.beauty_ai_db
+          .prepare('UPDATE salons SET admin_chat_id = ? WHERE id = ?')
+          .bind(userId, salon.id).run();
+        activeSalon = { ...salon, admin_chat_id: userId };
+        await sendMessage(botToken, chatId,
+          `✅ *${salon.name || salon.salon_name}* — ваш аккаунт привязан!\n\n` +
+          `Теперь этот бот знает вас как владельца. Начнём тест-драйв — пришлите *СЕЛФИ*:`
+        );
+        await setState(env, userId, botToken, S.WAITING_SELFIE, {});
+        await env.beauty_ai_db
+          .prepare('INSERT OR IGNORE INTO users (user_id, bot_token, salon_id, image_count) VALUES (?, ?, ?, 0)')
+          .bind(userId, botToken, activeSalon.id).run();
+        await env.beauty_ai_db
+          .prepare('UPDATE users SET salon_id = ? WHERE user_id = ? AND bot_token = ?')
+          .bind(activeSalon.id, userId, botToken).run();
+        return;
+      }
+
+      // Client or returning owner — normal /start flow
+      await env.beauty_ai_db
+        .prepare('INSERT OR IGNORE INTO users (user_id, bot_token, salon_id, image_count) VALUES (?, ?, ?, 0)')
+        .bind(userId, botToken, activeSalon.id).run();
+      await env.beauty_ai_db
+        .prepare('UPDATE users SET salon_id = ? WHERE user_id = ? AND bot_token = ?')
+        .bind(activeSalon.id, userId, botToken).run();
+
+      const startUpdate = { ...update, message: { ...message, text: '/start' } };
+      await handleUpdate(startUpdate, { ...activeSalon, bot_token: botToken }, env);
+      return;
+    }
+
+    // Plain /start with no slug
+    const salon = await getStandardSalonForUser(env, userId, botToken);
+    if (salon) {
+      await handleUpdate(update, { ...salon, bot_token: botToken }, env);
+    } else {
+      await sendMessage(botToken, chatId, '👋 Перейди по ссылке от своего салона чтобы начать.');
+    }
+    return;
+  }
+
+  // ── Regular message — route via stored association ────────────────────────
+  const salon = await getStandardSalonForUser(env, userId, botToken);
+  if (!salon) {
+    await sendMessage(botToken, chatId, '👋 Перейди по ссылке от своего салона чтобы начать.');
+    return;
+  }
+  await handleUpdate(update, { ...salon, bot_token: botToken }, env);
+}
+
+// ─── Trial salon creation ─────────────────────────────────────────────────────
+
+async function createTrialSalon(env, name, phone, sourceTrack = 'direct', adminChatId = null) {
+  let slug;
+  for (let i = 0; i < 5; i++) {
+    slug = generateSlug(name);
+    const exists = await env.beauty_ai_db
+      .prepare('SELECT id FROM salons WHERE slug = ?').bind(slug).first();
+    if (!exists) break;
+  }
+  // Synthetic bot_token: not a real Telegram token, unique per Standard-tier salon
+  const syntheticToken = 'trial:' + slug;
+
+  await env.beauty_ai_db
+    .prepare(`
+      INSERT INTO salons
+        (slug, bot_token, status, name, salon_name, salon_type,
+         whatsapp_phone, admin_chat_id, max_images, max_allowed_generations,
+         monthly_generations_count, source_track)
+      VALUES (?, ?, 'trial', ?, ?, 'barber', ?, ?, 3, 3, 0, ?)
+    `)
+    .bind(slug, syntheticToken, name, name, phone,
+          adminChatId ? String(adminChatId) : null, sourceTrack ?? null)
+    .run();
+
+  return env.beauty_ai_db.prepare('SELECT * FROM salons WHERE slug = ?').bind(slug).first();
+}
+
+// ─── B2B owner onboarding (inside Standard bot) ───────────────────────────────
+
+async function handleB2bOnboarding(message, env, userId, chatId, botToken, state, tempData) {
+  const text = message.text?.trim() ?? '';
+
+  if (state === S.B2B_NAME) {
+    if (!text) {
+      await sendMessage(botToken, chatId, '✍️ Введите название вашего салона или барбершопа:');
+      return;
+    }
+    await setState(env, userId, botToken, S.B2B_PHONE, { ...tempData, b2b_name: text });
+    await sendMessage(botToken, chatId,
+      `✅ *${text}*\n\n📱 Введите WhatsApp-номер салона (только цифры):\n_Например: 77001112233_`
+    );
+    return;
+  }
+
+  if (state === S.B2B_PHONE) {
+    const phone = text.replace(/\D/g, '');
+    if (phone.length < 10) {
+      await sendMessage(botToken, chatId,
+        '❌ Введите корректный номер. Например: `77001112233`'
+      );
+      return;
+    }
+
+    const sourceTrack = tempData.source_track ?? 'b2b_direct';
+    const salon = await createTrialSalon(env, tempData.b2b_name, phone, sourceTrack, userId);
+
+    await env.beauty_ai_db
+      .prepare('INSERT OR IGNORE INTO users (user_id, bot_token, salon_id, image_count) VALUES (?, ?, ?, 0)')
+      .bind(userId, botToken, salon.id).run();
+    await env.beauty_ai_db
+      .prepare('UPDATE users SET salon_id = ? WHERE user_id = ? AND bot_token = ?')
+      .bind(salon.id, userId, botToken).run();
+
+    await sendMessage(botToken, chatId,
+      `🎉 *${salon.name}* — тест-драйв запущен!\n\n` +
+      `Вы попробуете бота *как ваш клиент* — доступно *3 бесплатных генерации*.\n\n` +
+      `📸 Пришлите *СЕЛФИ* лица — подберём причёску!`
+    );
+    await setState(env, userId, botToken, S.WAITING_SELFIE, {});
+  }
+}
+
+// ─── B2B tariff / package selector (shown after trial ends) ──────────────────
+
+async function showB2bTariffSelector(botToken, chatId) {
+  await sendMessage(botToken, chatId,
+    `🎉 *Тест-драйв завершён!*\n\n` +
+    `Вы увидели как работает ИИ-ассистент для клиентов вашего салона.\n\n` +
+    `━━━━━━━━━━━━━━━━━━━━━\n` +
+    `📦 *Пакеты подписки (в месяц):*\n\n` +
+    `🟢 Мини — 150 ген. — ₸9,900\n` +
+    `🔵 Стандарт — 300 ген. — ₸14,900\n` +
+    `🟣 Бизнес — 600 ген. — ₸24,900\n` +
+    `⭐ Сеть — 1 200 ген. — ₸44,900\n\n` +
+    `🤖 *Тип размещения:*\n` +
+    `• В общем боте — бесплатно\n` +
+    `• В своём боте — +₸25,000\n\n` +
+    `Выберите подходящий пакет 👇`,
+    { inline_keyboard: [
+      [
+        { text: '🟢 Мини · ₸9,900',      callback_data: 'b2b_pkg_mini_shared'  },
+        { text: '🔵 Стандарт · ₸14,900', callback_data: 'b2b_pkg_std_shared'   },
+      ],
+      [
+        { text: '🟣 Бизнес · ₸24,900',   callback_data: 'b2b_pkg_biz_shared'   },
+        { text: '⭐ Сеть · ₸44,900',     callback_data: 'b2b_pkg_net_shared'   },
+      ],
+      [{ text: '🤖 Хочу свой бот (+₸25,000)', callback_data: 'b2b_hosting_own' }],
+    ]}
+  );
+}
+
+async function handleB2bPackageCallback(data, botToken, chatId, env) {
+  const packages = {
+    b2b_pkg_mini_shared : { name: 'Мини',     price: 9900,  gens: 150,  own: false },
+    b2b_pkg_std_shared  : { name: 'Стандарт', price: 14900, gens: 300,  own: false },
+    b2b_pkg_biz_shared  : { name: 'Бизнес',   price: 24900, gens: 600,  own: false },
+    b2b_pkg_net_shared  : { name: 'Сеть',     price: 44900, gens: 1200, own: false },
+  };
+
+  if (data === 'b2b_hosting_own') {
+    await sendMessage(botToken, chatId,
+      `🤖 *Свой бот (+₸25,000)*\n\n` +
+      `К стоимости любого пакета добавляется ₸25,000 за создание и настройку личного бота.\n\n` +
+      `Выберите пакет подписки 👇`,
+      { inline_keyboard: [
+        [
+          { text: '🟢 Мини · ₸34,900',      callback_data: 'b2b_pkg_mini_own'  },
+          { text: '🔵 Стандарт · ₸39,900',  callback_data: 'b2b_pkg_std_own'   },
+        ],
+        [
+          { text: '🟣 Бизнес · ₸49,900',    callback_data: 'b2b_pkg_biz_own'   },
+          { text: '⭐ Сеть · ₸69,900',      callback_data: 'b2b_pkg_net_own'   },
+        ],
+      ]}
+    );
+    return;
+  }
+
+  const pkg = packages[data] ?? packages[data?.replace('_own', '_shared')];
+  if (!pkg) return;
+
+  const isOwn  = data.endsWith('_own');
+  const total  = pkg.price + (isOwn ? 25000 : 0);
+  const hosting = isOwn ? ' + свой бот' : ' (в общем боте)';
+
+  await sendMessage(botToken, chatId,
+    `✅ Отличный выбор!\n\n` +
+    `📦 *${pkg.name}${hosting}*\n` +
+    `📊 ${pkg.gens} генераций в месяц\n` +
+    `💳 Сумма: *₸${total.toLocaleString('ru')}*\n\n` +
+    `Менеджер свяжется с вами в ближайшее время для оформления.\n\n` +
+    `_Или напишите нам прямо сейчас — мы всё настроим быстро!_`
+  );
+
+  // Notify admin of the B2B lead
+  const adminId = env.ADMIN_USER_ID;
+  if (adminId) {
+    await sendMessage(env.ADMIN_BOT_TOKEN, adminId,
+      `🔥 *B2B лид!*\n\nПакет: *${pkg.name}${hosting}*\nСумма: ₸${total.toLocaleString('ru')}\nChat ID: \`${chatId}\``
+    );
+  }
+}
+
+// Returns the salon whose admin_chat_id matches chatId (Standard tier owner lookup).
+async function findStandardOwnerSalon(env, chatId) {
+  return env.beauty_ai_db
+    .prepare("SELECT * FROM salons WHERE admin_chat_id = ? AND status IN ('standard_active','trial')")
+    .bind(chatId).first();
+}
+
+// Returns the salon associated with a Standard-tier user via salon_id FK.
+async function getStandardSalonForUser(env, userId, botToken) {
+  const user = await env.beauty_ai_db
+    .prepare('SELECT salon_id FROM users WHERE user_id = ? AND bot_token = ?')
+    .bind(userId, botToken).first();
+  if (!user?.salon_id) return null;
+  return env.beauty_ai_db
+    .prepare('SELECT * FROM salons WHERE id = ?')
+    .bind(user.salon_id).first();
 }
 
 // ─── /start ──────────────────────────────────────────────────────────────────
@@ -666,6 +1120,15 @@ async function handleSalonCallback(cq, salon, env) {
       return;
     }
 
+    // Monthly salon limit — block before submitting to fal.ai
+    if (isMonthlyLimitReached(salon)) {
+      await sendMessage(botToken, chatId,
+        '⏸ Извините, на этот месяц лимит примерок в этом салоне исчерпан. ' +
+        'Сервис возобновит работу в начале следующего месяца.'
+      );
+      return;
+    }
+
     const colorPart = color.colorPrompt ? ` Color the hair to ${color.colorPrompt}.` : '';
     const fullPrompt = tempData.style_prompt + colorPart + FACE_FINISH;
 
@@ -676,7 +1139,7 @@ async function handleSalonCallback(cq, salon, env) {
     );
 
     try {
-      await submitFluxKontext(tempData.selfie_url, fullPrompt, { userId, botToken, chatId }, env);
+      await submitFluxKontext(tempData.selfie_url, fullPrompt, { userId, botToken, chatId, salonId: salon.id }, env);
       await setState(env, userId, botToken, S.PROCESSING, {});
     } catch (err) {
       console.error('FLUX Kontext error:', err);
@@ -942,14 +1405,22 @@ async function submitFluxKontext(imageUrl, prompt, meta, env) {
   console.log('[flux-kontext] queued:', JSON.stringify(q));
 
   await env.beauty_ai_db
-    .prepare(`INSERT INTO pending_jobs (request_id, user_id, bot_token, chat_id, status_url, response_url)
-              VALUES (?, ?, ?, ?, ?, ?)`)
-    .bind(q.request_id, meta.userId, meta.botToken, meta.chatId, q.status_url, q.response_url)
+    .prepare(`INSERT INTO pending_jobs (request_id, user_id, bot_token, chat_id, status_url, response_url, salon_id)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .bind(q.request_id, meta.userId, meta.botToken, meta.chatId, q.status_url, q.response_url, meta.salonId ?? null)
     .run();
 }
 
 // ─── Makeup flow (1 photo) ────────────────────────────────────────────────────
 async function handleMakeup(fileUrl, salon, user, env, botToken, chatId, userId, maxImages) {
+  if (isMonthlyLimitReached(salon)) {
+    await sendMessage(botToken, chatId,
+      '⏸ Извините, на этот месяц лимит примерок в этом салоне исчерпан. ' +
+      'Сервис возобновит работу в начале следующего месяца.'
+    );
+    return;
+  }
+
   await sendMessage(botToken, chatId,
     '⏳ Отправил задачу на генерацию! Пришлю результат как только будет готово — обычно 30–90 секунд. 💄'
   );
@@ -965,7 +1436,7 @@ async function handleMakeup(fileUrl, salon, user, env, botToken, chatId, userId,
         guidance_scale     : 3.5,
         num_images         : 1,
       },
-      { userId, botToken, chatId },
+      { userId, botToken, chatId, salonId: salon.id },
       env
     );
     await setState(env, userId, botToken, S.PROCESSING, {});
@@ -979,6 +1450,14 @@ async function handleMakeup(fileUrl, salon, user, env, botToken, chatId, userId,
 
 // ─── Nails flow (1 photo) ─────────────────────────────────────────────────────
 async function handleNails(fileUrl, salon, user, env, botToken, chatId, userId, maxImages) {
+  if (isMonthlyLimitReached(salon)) {
+    await sendMessage(botToken, chatId,
+      '⏸ Извините, на этот месяц лимит примерок в этом салоне исчерпан. ' +
+      'Сервис возобновит работу в начале следующего месяца.'
+    );
+    return;
+  }
+
   await sendMessage(botToken, chatId,
     '⏳ Отправил задачу на генерацию! Пришлю результат как только будет готово — обычно 30–90 секунд. 💅'
   );
@@ -993,7 +1472,7 @@ async function handleNails(fileUrl, salon, user, env, botToken, chatId, userId, 
         guidance_scale     : 3.5,
         num_images         : 1,
       },
-      { userId, botToken, chatId },
+      { userId, botToken, chatId, salonId: salon.id },
       env
     );
     await setState(env, userId, botToken, S.PROCESSING, {});
@@ -1013,26 +1492,41 @@ async function incrementAndCheckLimit(env, botToken, chatId, salon, user, userId
     .bind(newCount, userId, botToken)
     .run();
 
-  // Increment salon-level monthly generation counter
-  if ((salon.plan_limit ?? 0) > 0) {
-    await env.beauty_ai_db
-      .prepare('UPDATE salons SET plan_used = plan_used + 1 WHERE bot_token = ?')
-      .bind(botToken).run();
-    const updated = await env.beauty_ai_db
-      .prepare('SELECT plan_name, plan_limit, plan_used FROM salons WHERE bot_token = ?')
-      .bind(botToken).first();
-    if (updated && updated.plan_used >= updated.plan_limit) {
+  // Increment salon-level monthly counter (both new and legacy fields)
+  await env.beauty_ai_db
+    .prepare(`UPDATE salons
+              SET monthly_generations_count = monthly_generations_count + 1,
+                  plan_used = plan_used + 1
+              WHERE bot_token = ?`)
+    .bind(botToken).run();
+
+  // Alert owner if we just hit the monthly cap
+  const updated = await env.beauty_ai_db
+    .prepare(`SELECT plan_name, max_allowed_generations, plan_limit,
+                     monthly_generations_count, plan_used
+              FROM salons WHERE bot_token = ?`)
+    .bind(botToken).first();
+  if (updated) {
+    const max  = updated.max_allowed_generations ?? updated.plan_limit  ?? 0;
+    const used = updated.monthly_generations_count ?? updated.plan_used ?? 0;
+    if (max > 0 && used >= max) {
+      const planLabel = updated.plan_name ?? 'тарифа';
       await sendMessage(botToken, salon.admin_chat_id,
-        `⚠️ *Лимит тарифа «${updated.plan_name}» исчерпан!*\n\n` +
-        `Использовано: *${updated.plan_used}/${updated.plan_limit}* генераций.\n\n` +
-        `Бот приостановлен для новых клиентов до 1-го числа следующего месяца.\n` +
-        `Чтобы продолжить сейчас — выберите новый тариф: /tariff`
+        `🚨 *Лимит генераций исчерпан!*\n\n` +
+        `Использовано: *${used}/${max}* генераций по ${planLabel}.\n\n` +
+        `Ваши клиенты хотят примерить образы, но бот заблокирован.\n` +
+        `Срочно докупите пакет или перейдите на более высокий тариф: /tariff`
       );
     }
   }
 
   if (newCount >= maxImages) {
-    await sendOfferMessage(botToken, chatId, salon);
+    // B2B trial owner finishes test-drive → show tariff/package selector
+    if (salon.status === 'trial' && String(chatId) === String(salon.admin_chat_id)) {
+      await showB2bTariffSelector(botToken, chatId);
+    } else {
+      await sendOfferMessage(botToken, chatId, salon);
+    }
     await setState(env, userId, botToken, S.DONE, {});
   } else {
     const remaining = maxImages - newCount;
@@ -1146,6 +1640,23 @@ async function handleAdminUpdate(update, env) {
     return;
   }
 
+  // ── Mass-trial tools (always available regardless of state) ──────────────
+  if (message.text === '/template') {
+    await sendMassTrialTemplate(env, chatId);
+    return;
+  }
+
+  if (message.text?.startsWith('/create_trial')) {
+    await handleCreateTrial(message, env, chatId);
+    return;
+  }
+
+  // Document with caption "/mass_trial" → parse CSV and generate trials
+  if (message.document && (message.caption?.trim() ?? '').startsWith('/mass_trial')) {
+    await handleMassTrial(message, env, chatId);
+    return;
+  }
+
   switch (state) {
     case A.START:
       await handleAdminMenuAction(message.text, env, chatId, userId);
@@ -1188,6 +1699,120 @@ async function handleAdminUpdate(update, env) {
       await sendBroadcast(env, chatId, userId, message.text, tempData.broadcast_target);
       break;
   }
+}
+
+// ─── Admin: /template — send CSV template file ───────────────────────────────
+
+async function sendMassTrialTemplate(env, chatId) {
+  const csv = [
+    'Название;Телефон;Источник',
+    'ChopChop Almaty;77012345678;Inst_Almaty',
+    'OldBoy Astana;77079876543;2GIS_Astana',
+  ].join('\n');
+
+  const form = new FormData();
+  form.append('chat_id', String(chatId));
+  form.append('document',
+    new File([new Blob([csv], { type: 'text/csv' })], 'trial_template.csv', { type: 'text/csv' }),
+    'trial_template.csv'
+  );
+  form.append('caption',
+    'Шаблон для массовой генерации триалов.\n\n' +
+    'Заполните строки по аналогии, сохраните как CSV и отправьте мне с подписью /mass_trial'
+  );
+
+  await fetch(`${TELEGRAM_API}/bot${env.ADMIN_BOT_TOKEN}/sendDocument`, {
+    method: 'POST', body: form,
+  });
+}
+
+// ─── Admin: /mass_trial — parse CSV, create trials, return results ────────────
+
+async function handleMassTrial(message, env, chatId) {
+  const fileId  = message.document.file_id;
+  const fileUrl = await getTelegramFileUrl(env.ADMIN_BOT_TOKEN, fileId);
+  const raw     = await (await fetch(fileUrl)).text();
+
+  const lines = raw.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) {
+    await adminSend(env, chatId, '❌ Файл пустой или неверный формат.');
+    return;
+  }
+
+  await adminSend(env, chatId, `⏳ Обрабатываю ${lines.length - 1} строк…`);
+
+  const botUsername = env.STANDARD_BOT_USERNAME ?? 'YourBot';
+  const resultRows  = ['Название;Телефон;Ссылка;Готовый Текст Скрипта'];
+  let created = 0, skipped = 0;
+
+  for (let i = 1; i < lines.length; i++) {
+    const parts = lines[i].split(';');
+    if (parts.length < 2) { skipped++; continue; }
+
+    const [name, phone, source] = parts.map(p => p.trim());
+    if (!name || !phone) { skipped++; continue; }
+
+    try {
+      const salon = await createTrialSalon(env, name, phone.replace(/\D/g, ''), source || 'mass_trial');
+      const link  = `https://t.me/${botUsername}?start=${salon.slug}`;
+      const script = `Привет! Мы создали для «${name}» персонального ИИ-ассистента. Попробуйте бесплатно → ${link}`;
+      resultRows.push(`${name};${phone};${link};${script}`);
+      created++;
+    } catch (err) {
+      console.error('[mass_trial]', name, err.message);
+      resultRows.push(`${name};${phone};ERROR;${err.message}`);
+      skipped++;
+    }
+  }
+
+  const resultCsv = resultRows.join('\n');
+  const form = new FormData();
+  form.append('chat_id', String(chatId));
+  form.append('document',
+    new File([new Blob([resultCsv], { type: 'text/csv' })], 'trial_results.csv', { type: 'text/csv' }),
+    'trial_results.csv'
+  );
+  form.append('caption', `✅ Создано: *${created}*, пропущено: *${skipped}*`);
+  form.append('parse_mode', 'Markdown');
+
+  await fetch(`${TELEGRAM_API}/bot${env.ADMIN_BOT_TOKEN}/sendDocument`, {
+    method: 'POST', body: form,
+  });
+}
+
+// ─── Admin: /create_trial Name Phone — create single trial ────────────────────
+
+async function handleCreateTrial(message, env, chatId) {
+  const args  = message.text.slice('/create_trial'.length).trim();
+  const parts = args.split(/\s+/);
+
+  if (parts.length < 2 || !args) {
+    await adminSend(env, chatId,
+      '❌ Формат: `/create_trial ChopChop Almaty 77012345678`\n\n' +
+      '_Последнее слово — номер, остальное — название_'
+    );
+    return;
+  }
+
+  const phone = parts[parts.length - 1].replace(/\D/g, '');
+  const name  = parts.slice(0, -1).join(' ');
+
+  if (phone.length < 10) {
+    await adminSend(env, chatId, '❌ Неверный номер. Только цифры, минимум 10.');
+    return;
+  }
+
+  const salon = await createTrialSalon(env, name, phone, 'admin_create');
+  const botUsername = env.STANDARD_BOT_USERNAME ?? 'YourBot';
+  const link  = `https://t.me/${botUsername}?start=${salon.slug}`;
+
+  await adminSend(env, chatId,
+    `✅ *Триал создан!*\n\n` +
+    `✂️ *${name}*\n` +
+    `📱 WhatsApp: \`${phone}\`\n` +
+    `🔗 Ссылка для оунера:\n\`${link}\`\n\n` +
+    `_Когда оунер откроет ссылку, его Telegram ID автоматически привяжется._`
+  );
 }
 
 async function handleAdminCallback(cq, env) {
@@ -2057,9 +2682,9 @@ async function submitFalJob(model, input, meta, env) {
   console.log('[submitFalJob] queued:', JSON.stringify(q));
 
   await env.beauty_ai_db
-    .prepare(`INSERT INTO pending_jobs (request_id, user_id, bot_token, chat_id, status_url, response_url)
-              VALUES (?, ?, ?, ?, ?, ?)`)
-    .bind(q.request_id, meta.userId, meta.botToken, meta.chatId, q.status_url, q.response_url)
+    .prepare(`INSERT INTO pending_jobs (request_id, user_id, bot_token, chat_id, status_url, response_url, salon_id)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .bind(q.request_id, meta.userId, meta.botToken, meta.chatId, q.status_url, q.response_url, meta.salonId ?? null)
     .run();
 }
 

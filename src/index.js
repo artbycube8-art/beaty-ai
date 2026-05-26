@@ -3141,6 +3141,7 @@ async function handleMassTrial(message, env, chatId) {
 
   const total = lines.length - 1;
   await adminSend(env, chatId, `⏳ Обрабатываю ${total} строк…`);
+  console.log(`[mass_trial] start: ${total} rows`);
 
   const botUsername = env.STANDARD_BOT_USERNAME ?? 'YourBot';
 
@@ -3168,39 +3169,14 @@ async function handleMassTrial(message, env, chatId) {
     row.token = 'trial:' + slug;
   }
 
-  // 3. Check for slug collisions with existing DB rows — one query per 500 slugs
-  const SLUG_CHUNK = 500;
-  const existingSlugs = new Set();
-  for (let i = 0; i < rows.length; i += SLUG_CHUNK) {
-    const chunk = rows.slice(i, i + SLUG_CHUNK);
-    const placeholders = chunk.map(() => '?').join(',');
-    const result = await env.beauty_ai_db
-      .prepare(`SELECT slug FROM salons WHERE slug IN (${placeholders})`)
-      .bind(...chunk.map(r => r.slug))
-      .all();
-    result.results.forEach(r => existingSlugs.add(r.slug));
-  }
-  // Re-generate only the conflicting ones
-  for (const row of rows) {
-    if (existingSlugs.has(row.slug)) {
-      for (let attempt = 0; attempt < 20; attempt++) {
-        const s = generateSlug(row.name);
-        if (!existingSlugs.has(s) && !usedSlugs.has(s)) {
-          usedSlugs.delete(row.slug);
-          row.slug = s;
-          row.token = 'trial:' + s;
-          usedSlugs.add(s);
-          break;
-        }
-      }
-    }
-  }
+  console.log(`[mass_trial] parsed: ${rows.length} valid rows, ${skipped} skipped`);
 
-  // 4. Batch INSERT in chunks of 100 (D1 batch limit)
+  // 3. Batch INSERT — parallel chunks of 100 statements, INSERT OR IGNORE handles rare slug collisions
   const INSERT_CHUNK = 100;
-  for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
-    const chunk = rows.slice(i, i + INSERT_CHUNK);
-    await env.beauty_ai_db.batch(chunk.map(row =>
+  const insertChunks = [];
+  for (let i = 0; i < rows.length; i += INSERT_CHUNK) insertChunks.push(rows.slice(i, i + INSERT_CHUNK));
+  await Promise.all(insertChunks.map(chunk =>
+    env.beauty_ai_db.batch(chunk.map(row =>
       env.beauty_ai_db
         .prepare(`INSERT OR IGNORE INTO salons
           (slug, bot_token, status, name, salon_name, salon_type,
@@ -3208,9 +3184,10 @@ async function handleMassTrial(message, env, chatId) {
            monthly_generations_count, source_track)
           VALUES (?, ?, 'trial', ?, ?, 'barber', ?, '0', 3, 3, 0, ?)`)
         .bind(row.slug, row.token, row.name, row.name, row.phone, row.source)
-    ));
-  }
+    ))
+  ));
 
+  console.log(`[mass_trial] inserts done`);
   // 5. Build result CSV with ready WhatsApp script per row
   const resultRows = ['Название;Телефон;Ссылка;Скрипт WhatsApp'];
   for (const row of rows) {

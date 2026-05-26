@@ -433,14 +433,14 @@ async function deliverFalResult(job, imageUrl, env) {
   const tgToken = isValidTgToken(salon.bot_token) ? salon.bot_token : env.STANDARD_BOT_TOKEN;
 
   const resultLine  = {
-    barber: '🎉 Вот твоя новая причёска!',
-    makeup: '🎉 Вот твой новый образ!',
-    nails : '🎉 Вот твой новый маникюр!',
+    barber: '🎉 Вот ваша новая причёска!',
+    makeup: '🎉 Вот ваш новый образ!',
+    nails : '🎉 Вот ваш новый маникюр!',
   };
   const retryTexts  = {
-    barber : `✂️ Хочешь примерить другую причёску? Пришли новое *СЕЛФИ*!`,
-    makeup : `💄 Хочешь примерить другой образ? Пришли новое *ФОТО*!`,
-    nails  : `💅 Хочешь попробовать другой дизайн? Пришли новое *ФОТО рук*!`,
+    barber : `✂️ Хотите примерить другую причёску? Пришлите новое *СЕЛФИ*!`,
+    makeup : `💄 Хотите примерить другой образ? Пришлите новое *ФОТО*!`,
+    nails  : `💅 Хотите попробовать другой дизайн? Пришлите новое *ФОТО рук*!`,
   };
   const retryStates = { barber: S.WAITING_SELFIE, makeup: S.WAITING_FACE, nails: S.WAITING_HAND };
 
@@ -798,7 +798,7 @@ async function handleUpdate(update, salon, env) {
     // Already processing — don't interrupt
     if (state === S.PROCESSING) {
       await sendMessage(botToken, chatId,
-        '⏳ Твой результат уже генерируется! Пришлю как только будет готово — подожди.'
+        '⏳ Ваш результат уже генерируется! Пришлю как только будет готово — подождите.'
       );
       return;
     }
@@ -806,9 +806,9 @@ async function handleUpdate(update, salon, env) {
       // Returning user — skip contact step, go straight to photo
       const remaining = maxImages - (user.image_count ?? 0);
       const hints = {
-        barber: '📸 Пришли *СЕЛФИ* своего лица, подберём новую причёску!',
-        makeup: '📸 Пришли *ФОТО лица*, подберём образ!',
-        nails:  '📸 Пришли *ФОТО рук* ладонями вверх, подберём маникюр!',
+        barber: '📸 Пришлите *СЕЛФИ* своего лица, подберём новую причёску!',
+        makeup: '📸 Пришлите *ФОТО лица*, подберём образ!',
+        nails:  '📸 Пришлите *ФОТО рук* ладонями вверх, подберём маникюр!',
       };
       await sendMessage(botToken, chatId,
         `👋 С возвращением! Осталось примерок: *${remaining}*.\n\n${hints[salon.salon_type] ?? hints.barber}`,
@@ -836,24 +836,24 @@ async function handleUpdate(update, salon, env) {
   // Prompt user if they send text while we're waiting for a photo or contact
   if (state === S.WAITING_CONTACT) {
     await sendMessage(botToken, chatId,
-      '👆 Нажми кнопку ниже, чтобы поделиться номером телефона.',
+      '👆 Нажмите кнопку ниже, чтобы поделиться номером телефона.',
       contactKeyboard()
     );
   } else if (state === S.WAITING_COLOR) {
-    await sendMessage(botToken, chatId, '🎨 Выбери цвет волос:', colorKeyboard());
+    await sendMessage(botToken, chatId, '🎨 Выберите цвет волос:', colorKeyboard());
   } else if (state === S.WAITING_STYLE_CHOICE) {
     const td = tempData;
     if (!td.gender) {
       await sendMessage(botToken, chatId, '👤 Для кого подбираем причёску?', genderKeyboard());
     } else {
       const kb = td.gender === 'male' ? maleStylesKeyboard() : femaleStylesKeyboard();
-      await sendMessage(botToken, chatId, '💇 Выбери *стиль причёски*:', kb);
+      await sendMessage(botToken, chatId, '💇 Выберите *стиль причёски*:', kb);
     }
   } else if ([S.WAITING_SELFIE, S.WAITING_FACE, S.WAITING_HAND].includes(state)) {
-    await sendMessage(botToken, chatId, '📸 Пришли фотографию, пожалуйста.');
+    await sendMessage(botToken, chatId, '📸 Пришлите фотографию, пожалуйста.');
   } else if (state === S.PROCESSING) {
     await sendMessage(botToken, chatId,
-      '⏳ Твой результат уже генерируется! Пришлю, как только будет готово — обычно 30–60 секунд.'
+      '⏳ Ваш результат уже генерируется! Пришлю, как только будет готово — обычно 30–60 секунд.'
     );
   } else if (state === S.DONE) {
     // User finished all free tries — push them to the booking CTA
@@ -861,11 +861,11 @@ async function handleUpdate(update, salon, env) {
   } else {
     // Unknown state or 'start' — redirect to /start, no conversation
     const hints = {
-      barber: '✂️ Нажми /start чтобы примерить причёску!',
-      makeup: '💄 Нажми /start чтобы примерить макияж!',
-      nails:  '💅 Нажми /start чтобы примерить маникюр!',
+      barber: '✂️ Нажмите /start чтобы примерить причёску!',
+      makeup: '💄 Нажмите /start чтобы примерить макияж!',
+      nails:  '💅 Нажмите /start чтобы примерить маникюр!',
     };
-    await sendMessage(botToken, chatId, hints[salon.salon_type] ?? '👋 Нажми /start чтобы начать!');
+    await sendMessage(botToken, chatId, hints[salon.salon_type] ?? '👋 Нажмите /start чтобы начать!');
   }
 }
 
@@ -917,9 +917,9 @@ async function handleStandardUpdate(update, env) {
         await setState(env, userId, botToken, 'start', {});
         await sendMessage(botToken, chatId,
           `💬 *Подключение через поддержку*\n\n` +
-          `Наш специалист создаст и подключит бота за вас.\n\n` +
+          `Наш специалист поможет вам подключить бота — просто напишите нам и мы всё сделаем за вас.\n\n` +
           `👉 [Написать в поддержку](${supportLink})\n\n` +
-          `_Напишите: «Хочу подключить личного бота» — вам ответят в течение нескольких часов._`
+          `_Вам ответят как можно быстрее._`
         );
       }
       return;
@@ -1068,6 +1068,7 @@ async function handleStandardUpdate(update, env) {
           .prepare('UPDATE salons SET admin_chat_id = ? WHERE id = ?')
           .bind(userId, salon.id).run();
         activeSalon = { ...salon, admin_chat_id: userId };
+        await sendWelcomePhotos(botToken, chatId, env);
         await sendMessage(botToken, chatId,
           `✅ *${salon.name || salon.salon_name}* — ваш аккаунт привязан!\n\n` +
           `Теперь этот бот знает вас как владельца. Начнём тест-драйв — пришлите *СЕЛФИ*:`
@@ -1210,24 +1211,29 @@ async function handleB2bOnboarding(message, env, userId, chatId, botToken, state
 async function showB2bTariffSelector(botToken, chatId, env) {
   const supportLink = env?.SUPPORT_TG_LINK ?? 'https://t.me/BeautyAI_Support';
   await sendMessage(botToken, chatId,
-    `🎉 *Тест-драйв завершён!*\n\n` +
-    `Вы только что увидели что получат ваши клиенты — они смогут примерять стрижки и образы прямо в Telegram, ещё до записи.\n\n` +
+    `✅ *Тест-драйв пройден!*\n\n` +
+    `Именно так это выглядит у ваших клиентов — они примеряют причёску прямо в Telegram, ещё *до записи* к вам.\n\n` +
+    `Хотите такого бота для своего салона — чтобы клиенты приходили уже заинтересованными?\n\n` +
     `━━━━━━━━━━━━━━━━━━━━━\n` +
-    `📦 *Подписка — оплата раз в месяц через Kaspi:*\n\n` +
+    `📦 *Тарифы — оплата раз в месяц через Kaspi:*\n\n` +
     `🟢 *Мини — ₸9,900/мес*\n` +
-    `└ До ~50 клиентов в месяц\n\n` +
+    `└ До ~50 клиентов в месяц\n` +
+    `└ _Подойдёт для небольшого барбершопа или студии — только открываетесь или хотите попробовать_\n\n` +
     `🔵 *Стандарт — ₸14,900/мес*\n` +
-    `└ До ~100 клиентов в месяц\n\n` +
+    `└ До ~100 клиентов в месяц\n` +
+    `└ _Для активно работающего салона — стабильный поток новых клиентов каждый месяц_\n\n` +
     `🟣 *Бизнес — ₸24,900/мес*\n` +
-    `└ До ~200 клиентов в месяц\n\n` +
+    `└ До ~200 клиентов в месяц\n` +
+    `└ _Для загруженного салона с несколькими мастерами — максимальный охват без ограничений_\n\n` +
     `⭐ *Сеть — ₸44,900/мес*\n` +
-    `└ До ~400 клиентов в месяц\n\n` +
-    `📌 _Расчёт клиентов указан из расчёта 3 примерки на человека. В настройках вы сами выставляете нужное число._\n\n` +
+    `└ До ~400 клиентов в месяц\n` +
+    `└ _Для сети точек или крупного заведения — один бот на весь поток_\n\n` +
+    `📌 _Расчёт из 3 примерок на клиента. В настройках выставляете сами._\n\n` +
     `━━━━━━━━━━━━━━━━━━━━━\n` +
-    `🤖 *Про своего бота:*\n` +
-    `Без своего бота — ваши клиенты пишут в общий бот @qrbeatyai\\_bot по вашей ссылке.\n` +
-    `Со своим ботом — у вас отдельный бот с вашим именем, например @chopchop\\_almaty\\_bot.\n\n` +
-    `Выберите подходящий пакет 👇`,
+    `🤖 *Свой бот или общий?*\n` +
+    `Общий — клиенты пишут в @qrbeatyai\\_bot по вашей ссылке.\n` +
+    `Свой — отдельный бот с названием вашего салона, например @chopchop\\_almaty\\_bot.\n\n` +
+    `👇 Выберите тариф:`,
     { inline_keyboard: [
       [
         { text: '🟢 Мини · ₸9,900',      callback_data: 'b2b_pkg_mini_shared'  },
@@ -1592,52 +1598,44 @@ async function launchB2bPremiumBot(env, adminChatId, data) {
   await sendMessage(adminToken, adminChatId, `✅ Бот клиента \`${userId}\` успешно запущен.`);
 }
 
-// ─── /start ──────────────────────────────────────────────────────────────────
-async function onStart(message, salon, botToken, chatId, env) {
-  const maxImages = salon.max_images ?? 3;
-
-  // Send example photos if configured (uploaded via admin bot with caption "welcome1"/"welcome2")
+async function sendWelcomePhotos(botToken, chatId, env) {
   const [row1, row2] = await Promise.all([
     env.beauty_ai_db.prepare("SELECT value FROM settings WHERE key = 'welcome_photo_1'").first(),
     env.beauty_ai_db.prepare("SELECT value FROM settings WHERE key = 'welcome_photo_2'").first(),
   ]);
-  const adminToken = env.ADMIN_BOT_TOKEN;
-  if (row1 && row2 && adminToken) {
-    // Resolve file_ids to temp URLs via admin bot, then send via client bot
-    const [f1, f2] = await Promise.all([
-      fetch(`${TELEGRAM_API}/bot${adminToken}/getFile?file_id=${row1.value}`).then(r => r.json()),
-      fetch(`${TELEGRAM_API}/bot${adminToken}/getFile?file_id=${row2.value}`).then(r => r.json()),
-    ]);
-    if (f1.ok && f2.ok) {
-      const url1 = `https://api.telegram.org/file/bot${adminToken}/${f1.result.file_path}`;
-      const url2 = `https://api.telegram.org/file/bot${adminToken}/${f2.result.file_path}`;
-      await fetch(`${TELEGRAM_API}/bot${botToken}/sendMediaGroup`, {
-        method : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body   : JSON.stringify({
-          chat_id: chatId,
-          media  : [{ type: 'photo', media: url1 }, { type: 'photo', media: url2 }],
-        }),
-      });
-    }
-  } else if (row1 && adminToken) {
-    const f1 = await fetch(`${TELEGRAM_API}/bot${adminToken}/getFile?file_id=${row1.value}`).then(r => r.json());
-    if (f1.ok) {
-      const url1 = `https://api.telegram.org/file/bot${adminToken}/${f1.result.file_path}`;
-      await fetch(`${TELEGRAM_API}/bot${botToken}/sendPhoto`, {
-        method : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body   : JSON.stringify({ chat_id: chatId, photo: url1 }),
-      });
-    }
+  if (row1 && row2) {
+    await fetch(`${TELEGRAM_API}/bot${botToken}/sendMediaGroup`, {
+      method : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body   : JSON.stringify({
+        chat_id: chatId,
+        media  : [
+          { type: 'photo', media: row1.value },
+          { type: 'photo', media: row2.value },
+        ],
+      }),
+    });
+  } else if (row1) {
+    await fetch(`${TELEGRAM_API}/bot${botToken}/sendPhoto`, {
+      method : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body   : JSON.stringify({ chat_id: chatId, photo: row1.value }),
+    });
   }
+}
+
+// ─── /start ──────────────────────────────────────────────────────────────────
+async function onStart(message, salon, botToken, chatId, env) {
+  const maxImages = salon.max_images ?? 3;
+
+  await sendWelcomePhotos(botToken, chatId, env);
 
   const greetings = {
-    barber: `✂️ *${salon.salon_name}* — ИИ-подбор причёски\n\nЗагрузи селфи и за 60 секунд увидишь себя с новой стрижкой — прямо здесь в Telegram.\n\n_${maxImages} бесплатных примерки 🎁_\n\n👇 Поделись контактом чтобы начать:`,
+    barber: `✂️ *${salon.salon_name}* — ИИ-подбор причёски\n\nЗагрузите селфи и за 60 секунд увидите себя с новой стрижкой — прямо здесь в Telegram.\n\n_${maxImages} бесплатных примерки 🎁_\n\n👇 Поделитесь контактом чтобы начать:`,
 
-    makeup: `💄 *${salon.salon_name}* — ИИ-подбор макияжа\n\nЗагрузи фото лица и за 60 секунд увидишь профессиональный образ — прямо здесь в Telegram.\n\n_${maxImages} бесплатных примерки 🎁_\n\n👇 Поделись контактом чтобы начать:`,
+    makeup: `💄 *${salon.salon_name}* — ИИ-подбор макияжа\n\nЗагрузите фото лица и за 60 секунд увидите профессиональный образ — прямо здесь в Telegram.\n\n_${maxImages} бесплатных примерки 🎁_\n\n👇 Поделитесь контактом чтобы начать:`,
 
-    nails: `💅 *${salon.salon_name}* — ИИ-подбор маникюра\n\nЗагрузи фото рук и за 60 секунд увидишь трендовый дизайн на своих ногтях — прямо здесь в Telegram.\n\n_${maxImages} бесплатных примерки 🎁_\n\n👇 Поделись контактом чтобы начать:`,
+    nails: `💅 *${salon.salon_name}* — ИИ-подбор маникюра\n\nЗагрузите фото рук и за 60 секунд увидите трендовый дизайн на своих ногтях — прямо здесь в Telegram.\n\n_${maxImages} бесплатных примерки 🎁_\n\n👇 Поделитесь контактом чтобы начать:`,
   };
 
   await sendMessage(
@@ -1670,15 +1668,15 @@ async function onContact(message, salon, user, env, botToken, chatId, userId) {
   // Next step depends on salon type
   const steps = {
     barber: {
-      text  : `✅ Отлично, ${name}!\n\n📸 Теперь пришли *СЕЛФИ* — чёткое, фронтально, при хорошем свете.\n\n_Я подберу тебе новую причёску за ~60 секунд._`,
+      text  : `✅ Отлично, ${name}!\n\n📸 Теперь пришлите *СЕЛФИ* — чёткое, фронтально, при хорошем свете.\n\n_Я подберу вам новую причёску за ~60 секунд._`,
       state : S.WAITING_SELFIE,
     },
     makeup: {
-      text  : `✅ Отлично, ${name}!\n\n📸 Теперь пришли *ФОТО лица* — чёткое, фронтально, при хорошем свете.\n\n_Я создам твой образ за ~60 секунд._`,
+      text  : `✅ Отлично, ${name}!\n\n📸 Теперь пришлите *ФОТО лица* — чёткое, фронтально, при хорошем свете.\n\n_Я создам ваш образ за ~60 секунд._`,
       state : S.WAITING_FACE,
     },
     nails: {
-      text  : `✅ Отлично, ${name}!\n\n📸 Теперь пришли *ФОТО рук* ладонями вверх, при хорошем свете.\n\n_Я подберу дизайн маникюра за ~60 секунд._`,
+      text  : `✅ Отлично, ${name}!\n\n📸 Теперь пришлите *ФОТО рук* ладонями вверх, при хорошем свете.\n\n_Я подберу вам дизайн маникюра за ~60 секунд._`,
       state : S.WAITING_HAND,
     },
   };
@@ -1714,6 +1712,7 @@ async function handleBarber(state, tempData, fileUrl, salon, user, env, botToken
     await setState(env, userId, botToken, S.WAITING_STYLE_CHOICE, { selfie_url: fileUrl });
     await sendMessage(botToken, chatId,
       `✅ Селфи получено!\n\n👤 Для кого подбираем причёску?`,
+
       genderKeyboard()
     );
   }
@@ -1825,7 +1824,7 @@ async function handleSalonCallback(cq, salon, env) {
     const gender = data === 'gender_male' ? 'male' : 'female';
     await setState(env, userId, botToken, S.WAITING_STYLE_CHOICE, { ...tempData, gender });
     const kb = gender === 'male' ? maleStylesKeyboard() : femaleStylesKeyboard();
-    await sendMessage(botToken, chatId, '💇 Выбери *стиль причёски*:', kb);
+    await sendMessage(botToken, chatId, '💇 Выберите *стиль причёски*:', kb);
     return;
   }
 
@@ -1835,15 +1834,15 @@ async function handleSalonCallback(cq, salon, env) {
     // Guard against stale keyboard buttons from previous sessions
     const callbackIsMale = data.startsWith('mstyle_');
     if (!storedGender) {
-      await sendMessage(botToken, chatId, '👆 Сначала выбери для кого причёска:', genderKeyboard());
+      await sendMessage(botToken, chatId, '👆 Сначала выберите для кого причёска:', genderKeyboard());
       return;
     }
     if (callbackIsMale && storedGender !== 'male') {
-      await sendMessage(botToken, chatId, '👆 Выбери стиль причёски:', femaleStylesKeyboard());
+      await sendMessage(botToken, chatId, '👆 Выберите стиль причёски:', femaleStylesKeyboard());
       return;
     }
     if (!callbackIsMale && storedGender !== 'female') {
-      await sendMessage(botToken, chatId, '👆 Выбери стиль причёски:', maleStylesKeyboard());
+      await sendMessage(botToken, chatId, '👆 Выберите стиль причёски:', maleStylesKeyboard());
       return;
     }
     const isMale  = callbackIsMale;
@@ -1860,8 +1859,8 @@ async function handleSalonCallback(cq, salon, env) {
       style_is_male   : isMale,
     });
     const colorPrompt = isDefault
-      ? `✅ Оставляем твою причёску!\n\n🎨 Выбери *новый цвет волос*:`
-      : `✅ Стиль: *${preset.label}*\n\n🎨 Выбери *цвет волос* (или оставь свой):`;
+      ? `✅ Оставляем вашу причёску!\n\n🎨 Выберите *новый цвет волос*:`
+      : `✅ Стиль: *${preset.label}*\n\n🎨 Выберите *цвет волос* (или оставьте свой):`;
     await sendMessage(botToken, chatId, colorPrompt, colorKeyboard());
     return;
   }
@@ -1871,7 +1870,7 @@ async function handleSalonCallback(cq, salon, env) {
     const colorKey = data.replace('color_', '');
     const color    = HAIR_COLORS[colorKey];
     if (!color || !tempData.selfie_url || !tempData.style_prompt) {
-      await sendMessage(botToken, chatId, '⚠️ Что-то пошло не так. Начни заново — пришли селфи.');
+      await sendMessage(botToken, chatId, '⚠️ Что-то пошло не так. Начните заново — пришлите селфи.');
       await setState(env, userId, botToken, S.WAITING_SELFIE, {});
       return;
     }
@@ -1879,7 +1878,7 @@ async function handleSalonCallback(cq, salon, env) {
     // "Своя причёска" + "Свой цвет" — менять нечего, просим выбрать цвет
     if (tempData.style_is_default && !color.colorPrompt) {
       await sendMessage(botToken, chatId,
-        '🎨 Ты оставляешь свою причёску — тогда нужно выбрать *новый цвет* волос.\n\nВыбери цвет из списка:',
+        '🎨 Вы оставляете свою причёску — тогда нужно выбрать *новый цвет* волос.\n\nВыберите цвет из списка:',
         colorKeyboard()
       );
       return;
@@ -1909,7 +1908,7 @@ async function handleSalonCallback(cq, salon, env) {
     const styleLabel = tempData.style_label ?? '';
     const colorLabel = color.label !== '✅ Мой цвет' ? ` · ${color.label}` : '';
     await sendMessage(botToken, chatId,
-      `⏳ Генерирую *${styleLabel}${colorLabel}*… Пришлю результат через ~60 секунд. ✨`
+      `⏳ Генерирую *${styleLabel}${colorLabel}*… Пришлю вам результат через ~60 секунд. ✨`
     );
 
     try {
@@ -2362,26 +2361,26 @@ async function sendOfferMessage(botToken, chatId, salon) {
   let bodyText, buttonText, waText;
 
   if (disc) {
-    waText     = `Привет! Хочу записаться в ${salon.salon_name} со скидкой ${disc}% — я пробовал ИИ-подбор причёски 🎉`;
+    waText     = `Здравствуйте! Хочу записаться в ${salon.salon_name} со скидкой ${disc}% — пробовал(а) ИИ-подбор причёски 🎉`;
     buttonText = `🟢 Записаться со скидкой ${disc}%`;
     bodyText   = [
       `🎉 *Примерки закончились!*`,
       '',
-      `Нравится какой-то результат? Воплоти его в жизнь!`,
+      `Нравится какой-то результат? Воплотите его в жизнь!`,
       '',
-      `🎁 *Скидка ${disc}% на первый визит* — только для тебя от *${salon.salon_name}*`,
+      `🎁 *Скидка ${disc}% на первый визит* — только для вас от *${salon.salon_name}*`,
       '',
-      `👇 Нажми и запишись за 30 секунд:`,
+      `👇 Нажмите и запишитесь за 30 секунд:`,
     ].join('\n');
   } else {
-    waText     = `Привет! Хочу записаться в ${salon.salon_name} — пробовал ИИ-подбор причёски, хочу сделать такую же!`;
+    waText     = `Здравствуйте! Хочу записаться в ${salon.salon_name} — пробовал(а) ИИ-подбор причёски, хочу сделать такую же!`;
     buttonText = `💈 Записаться в ${salon.salon_name}`;
     bodyText   = [
       `🎉 *Примерки закончились!*`,
       '',
-      `Понравился какой-то вариант? Самое время сделать его по-настоящему!`,
+      `Понравился какой-то вариант? Самое время воплотить его в жизнь!`,
       '',
-      `Запишись в *${salon.salon_name}* — покажи мастеру понравившееся фото.`,
+      `Запишитесь в *${salon.salon_name}* — покажите мастеру понравившееся фото.`,
       '',
       `👇 Записаться за 30 секунд:`,
     ].join('\n');
@@ -4068,14 +4067,14 @@ async function handleFalCallback(body, env) {
   if (!salon || !user) return;
 
   const resultLine  = {
-    barber: '🎉 Вот твоя новая причёска!',
-    makeup: '🎉 Вот твой новый образ!',
-    nails : '🎉 Вот твой новый маникюр!',
+    barber: '🎉 Вот ваша новая причёска!',
+    makeup: '🎉 Вот ваш новый образ!',
+    nails : '🎉 Вот ваш новый маникюр!',
   };
   const retryTexts  = {
-    barber : `✂️ Хочешь примерить другую причёску? Пришли новое *СЕЛФИ*!`,
-    makeup : `💄 Хочешь примерить другой образ? Пришли новое *ФОТО*!`,
-    nails  : `💅 Хочешь попробовать другой дизайн? Пришли новое *ФОТО рук*!`,
+    barber : `✂️ Хотите примерить другую причёску? Пришлите новое *СЕЛФИ*!`,
+    makeup : `💄 Хотите примерить другой образ? Пришлите новое *ФОТО*!`,
+    nails  : `💅 Хотите попробовать другой дизайн? Пришлите новое *ФОТО рук*!`,
   };
   const retryStates = { barber: S.WAITING_SELFIE, makeup: S.WAITING_FACE, nails: S.WAITING_HAND };
 

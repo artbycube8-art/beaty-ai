@@ -3139,40 +3139,94 @@ async function handleMassTrial(message, env, chatId) {
     return;
   }
 
-  await adminSend(env, chatId, `⏳ Обрабатываю ${lines.length - 1} строк…`);
+  const total = lines.length - 1;
+  await adminSend(env, chatId, `⏳ Обрабатываю ${total} строк…`);
 
   const botUsername = env.STANDARD_BOT_USERNAME ?? 'YourBot';
-  const resultRows  = ['Название;Телефон;Ссылка;Готовый Текст Скрипта'];
-  let created = 0, skipped = 0;
 
+  // 1. Parse all valid rows in memory
+  let skipped = 0;
+  const rows = [];
   for (let i = 1; i < lines.length; i++) {
     const parts = lines[i].split(';');
     if (parts.length < 2) { skipped++; continue; }
-
     const [name, phone, source] = parts.map(p => p.trim());
     if (!name || !phone) { skipped++; continue; }
+    rows.push({ name, phone: phone.replace(/\D/g, ''), source: source || 'mass_trial' });
+  }
 
-    try {
-      const salon = await createTrialSalon(env, name, phone.replace(/\D/g, ''), source || 'mass_trial');
-      const link  = `https://t.me/${botUsername}?start=${salon.slug}`;
-      const script = `Привет! Мы создали для «${name}» персонального ИИ-ассистента. Попробуйте бесплатно → ${link}`;
-      resultRows.push(`${name};${phone};${link};${script}`);
-      created++;
-    } catch (err) {
-      console.error('[mass_trial]', name, err.message);
-      resultRows.push(`${name};${phone};ERROR;${err.message}`);
-      skipped++;
+  // 2. Generate slugs in memory — deduplicate within the batch
+  const usedSlugs = new Set();
+  for (const row of rows) {
+    let slug;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      slug = generateSlug(row.name);
+      if (!usedSlugs.has(slug)) break;
+    }
+    usedSlugs.add(slug);
+    row.slug = slug;
+    row.token = 'trial:' + slug;
+  }
+
+  // 3. Check for slug collisions with existing DB rows — one query per 500 slugs
+  const SLUG_CHUNK = 500;
+  const existingSlugs = new Set();
+  for (let i = 0; i < rows.length; i += SLUG_CHUNK) {
+    const chunk = rows.slice(i, i + SLUG_CHUNK);
+    const placeholders = chunk.map(() => '?').join(',');
+    const result = await env.beauty_ai_db
+      .prepare(`SELECT slug FROM salons WHERE slug IN (${placeholders})`)
+      .bind(...chunk.map(r => r.slug))
+      .all();
+    result.results.forEach(r => existingSlugs.add(r.slug));
+  }
+  // Re-generate only the conflicting ones
+  for (const row of rows) {
+    if (existingSlugs.has(row.slug)) {
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const s = generateSlug(row.name);
+        if (!existingSlugs.has(s) && !usedSlugs.has(s)) {
+          usedSlugs.delete(row.slug);
+          row.slug = s;
+          row.token = 'trial:' + s;
+          usedSlugs.add(s);
+          break;
+        }
+      }
     }
   }
 
-  const resultCsv = resultRows.join('\n');
+  // 4. Batch INSERT in chunks of 100 (D1 batch limit)
+  const INSERT_CHUNK = 100;
+  for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
+    const chunk = rows.slice(i, i + INSERT_CHUNK);
+    await env.beauty_ai_db.batch(chunk.map(row =>
+      env.beauty_ai_db
+        .prepare(`INSERT OR IGNORE INTO salons
+          (slug, bot_token, status, name, salon_name, salon_type,
+           whatsapp_phone, admin_chat_id, max_images, max_allowed_generations,
+           monthly_generations_count, source_track)
+          VALUES (?, ?, 'trial', ?, ?, 'barber', ?, '0', 3, 3, 0, ?)`)
+        .bind(row.slug, row.token, row.name, row.name, row.phone, row.source)
+    ));
+  }
+
+  // 5. Build result CSV with ready WhatsApp script per row
+  const resultRows = ['Название;Телефон;Ссылка;Скрипт WhatsApp'];
+  for (const row of rows) {
+    const link   = `https://t.me/${botUsername}?start=${row.slug}`;
+    const script = `${row.name}, компания Beauty AI.\n\nНашли способ, как салоны в Казахстане получают новых клиентов без таргета и без сторис.\n\nКлиент видит себя с готовой причёской на своём фото — прямо в телефоне. Сам выбирает стиль, сам принимает решение. Вы получаете человека, который уже определился и готов записаться.\n\nИспытайте это на себе прямо сейчас — в нашем бесплатном демо-режиме:\n👉 ${link}`;
+    resultRows.push(`${row.name};${row.phone};${link};"${script.replace(/"/g, '""')}"`);
+  }
+
+  const resultCsv = '﻿' + resultRows.join('\n');
   const form = new FormData();
   form.append('chat_id', String(chatId));
   form.append('document',
     new File([new Blob([resultCsv], { type: 'text/csv' })], 'trial_results.csv', { type: 'text/csv' }),
     'trial_results.csv'
   );
-  form.append('caption', `✅ Создано: *${created}*, пропущено: *${skipped}*`);
+  form.append('caption', `✅ Создано: *${rows.length}*, пропущено: *${skipped}*`);
   form.append('parse_mode', 'Markdown');
 
   await fetch(`${TELEGRAM_API}/bot${env.ADMIN_BOT_TOKEN}/sendDocument`, {

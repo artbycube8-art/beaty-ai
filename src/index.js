@@ -35,9 +35,13 @@ const S = {
   SALON_PUSH_CONFIRM : 'salon_push_confirm',
   // Salon owner tariff flow
   SALON_TARIFF_RECEIPT: 'salon_tariff_receipt',
+  // Salon owner settings/edit flow
+  SALON_EDIT_NAME  : 'salon_edit_name',
+  SALON_EDIT_PHONE : 'salon_edit_phone',
   // B2B owner onboarding (inside Standard bot)
   B2B_NAME            : 'b2b_name',
   B2B_PHONE           : 'b2b_phone',
+  B2B_TYPE            : 'b2b_type',    // type selection step between name and phone
   // B2B payment flow
   B2B_AWAITING_PHONE       : 'b2b_awaiting_phone',
   B2B_AWAITING_CHEQUE      : 'b2b_awaiting_cheque',
@@ -72,35 +76,68 @@ const PKG_SHORT = Object.fromEntries(
 const FAL_QUEUE = 'https://queue.fal.run';
 
 // ─── Barber presets — FLUX Kontext editing instructions ──────────────────────
-// Face smoothing added to every prompt via FACE_FINISH suffix.
-const FACE_FINISH = ' Smooth skin with subtle professional retouching, clean natural complexion. Keep the same person face identity, facial features, skin tone, eyes, eyebrows, expression, clothing and background exactly the same — only change the hair. Do NOT alter, recolor, or remove the eyebrows.';
+// Two FACE_LOCK variants — gender-specific so the model never confuses identity.
+// Prepended to every prompt so the model reads it first.
+const FACE_LOCK_M = 'ABSOLUTE RULE: The person in this photo is MALE. DO NOT change the face, masculine bone structure, jawline, brow ridge, eyes, nose, mouth, chin, ears, neck, skin tone, or any facial feature. DO NOT feminize the face or any part of it under any circumstances. The face must be pixel-identical to the input. ONLY edit the hair on the scalp. Keep clothing, background, pose, and lighting unchanged. HAIR EDIT ONLY: ';
+const FACE_LOCK_F = 'ABSOLUTE RULE: The person in this photo is FEMALE. DO NOT change the face, feminine bone structure, eyes, nose, mouth, chin, cheekbones, ears, neck, skin tone, or any facial feature. DO NOT masculinize the face or any part of it under any circumstances. The face must be pixel-identical to the input. ONLY edit the hair on the scalp. Keep clothing, background, pose, and lighting unchanged. HAIR EDIT ONLY: ';
 
 const MALE_STYLES = {
-  default    : { label: '✅ Свою причёску',    hairPrompt: "Keep the person's exact current hairstyle completely unchanged — same haircut, same length, same style. Only apply color changes if specified." },
-  fade       : { label: '🔪 Фейд',            hairPrompt: "COMPLETELY TRANSFORM the hairstyle into a bald fade. The sides and back MUST be shaved to skin at the bottom, gradually blending upward into 3-5cm of textured hair on top. Sharp temple and neckline lineup. If hair is currently long, shorten it dramatically — the result must look like a fresh barbershop fade. Preserve the man's face, eyes, skin, and clothing exactly." },
-  undercut   : { label: '✂️ Андеркат',        hairPrompt: "COMPLETELY TRANSFORM the hairstyle into an undercut. The sides and back MUST be shaved nearly to skin. The top hair stays long (5-8cm) and is slicked or swept back. There MUST be a stark visible contrast line where very short sides meet the longer top hair. If hair is currently long or fluffy on sides, shave it down. Preserve the man's face, eyes, skin, and clothing exactly." },
-  frenchcrop : { label: '🌾 Фр. кроп',        hairPrompt: "COMPLETELY TRANSFORM the hairstyle into a French crop. The result MUST show: short textured hair on top (2-3cm maximum) with a clear straight horizontal fringe line across the forehead at eyebrow level. Sides faded very short. The entire cut is compact and short — if hair is currently long, shorten it dramatically to this close-cropped style. Preserve the man's face, eyes, skin, and clothing exactly." },
-  edgar      : { label: '⬛ Эдгар',            hairPrompt: "COMPLETELY TRANSFORM the hairstyle into an Edgar cut. The result MUST show: flat short hair on top (2-3cm) with a perfectly straight blunt horizontal fringe at the forehead, almost like a shelf. Sides faded very short. The top is boxy and rectangular. Dramatically shorten any existing long hair to this close-cropped style. Preserve the man's face, eyes, skin, and clothing exactly." },
-  slickback  : { label: '💆 Слик бэк',        hairPrompt: "COMPLETELY TRANSFORM the hairstyle into a slick back. All hair on top MUST be visibly combed straight backward from forehead to nape in a smooth glossy flow — it looks wet and polished. Short faded sides. The hair direction must clearly go from front to back. Preserve the man's face, eyes, skin, and clothing exactly." },
-  quiff      : { label: '🌟 Квифф',           hairPrompt: "COMPLETELY TRANSFORM the hairstyle into a quiff. The front section of hair MUST be swept upward and back, creating clear dramatic height and volume above the forehead. The sides are faded short. There must be visible upward-swept volume at the front of the head — a bold prominent quiff shape. Preserve the man's face, eyes, skin, and clothing exactly." },
-  pompadour  : { label: '💈 Помпадур',        hairPrompt: "COMPLETELY TRANSFORM the hairstyle into a pompadour. A large volume of hair MUST be swept dramatically upward and backward from the forehead, creating significant height at the front. Sides are tapered or faded short. The sweeping arch of hair going up and back must be clearly visible and bold. Preserve the man's face, eyes, skin, and clothing exactly." },
-  taper      : { label: '🎯 Тейпер',          hairPrompt: "COMPLETELY TRANSFORM the hairstyle into a modern taper fade. The sides and back taper from medium hair at the top down to skin-short at the bottom edges. The top has 4-6cm of textured hair. The gradual blend from skin to full hair along the sides must be clearly visible. Preserve the man's face, eyes, skin, and clothing exactly." },
-  curly      : { label: '🌀 Кудри',           hairPrompt: "COMPLETELY TRANSFORM the hairstyle into curly hair with defined coils and strong volume. If hair is currently straight, it MUST visibly change to bouncy defined curls (4-8cm on top). The curl definition and ringlet texture must be obvious and prominent. Masculine curly hairstyle. Preserve the man's face, eyes, skin, and clothing exactly." },
-  buzz       : { label: '⚡ Buzz Cut',         hairPrompt: "COMPLETELY TRANSFORM the hairstyle into a buzz cut. The hair MUST be uniformly very short (grade 2, approximately 6mm) over the ENTIRE head — top, sides, and back all equally short. If hair is currently long, it must be dramatically shortened to near-shaved all over. No fade, no variation — uniform very short buzz all around. Preserve the man's face, eyes, skin, and clothing exactly." },
+  // ── Сохранить ──────────────────────────────────────────────────────────────
+  default    : { label: '✅ Свою причёску',      hairPrompt: "Keep the exact current hairstyle completely unchanged — same haircut, same length, same style. Only apply color changes if specified." },
+  // ── Короткие ───────────────────────────────────────────────────────────────
+  buzz       : { label: '⚡ Buzz Cut',           hairPrompt: "Change ONLY the hair into a buzz cut: uniformly very short (~6mm grade 2) over the entire head — top, sides, and back all equally short." },
+  crewcut    : { label: '🪖 Кру кат',            hairPrompt: "Change ONLY the hair into a crew cut: very short tapered sides fading to skin, slightly longer flat textured top (1-2cm), clean military-style lines." },
+  caesar     : { label: '🏛 Цезарь',             hairPrompt: "Change ONLY the hair into a Caesar cut: short uniform hair all over (2-3cm) with a distinct straight horizontal fringe across the forehead, no fade." },
+  // ── Фейды ──────────────────────────────────────────────────────────────────
+  fade       : { label: '🔪 Фейд',              hairPrompt: "Change ONLY the hair into a bald fade: sides and back shaved to skin at the bottom, gradually blending upward into 3-5cm of textured hair on top. Sharp temple and neckline lineup." },
+  taper      : { label: '🎯 Тейпер',            hairPrompt: "Change ONLY the hair into a modern taper fade: sides taper from medium at the top down to skin-short at the bottom, top has 4-6cm of textured hair." },
+  frenchcrop : { label: '🌾 Французский кроп',  hairPrompt: "Change ONLY the hair into a French crop: short textured hair on top (2-3cm) with a clear straight horizontal fringe at eyebrow level, sides faded very short." },
+  edgar      : { label: '⬛ Эдгар',              hairPrompt: "Change ONLY the hair into an Edgar cut: flat short hair on top (2-3cm) with a perfectly straight blunt horizontal fringe at the forehead, sides faded very short, boxy rectangular top." },
+  // ── Укладки ────────────────────────────────────────────────────────────────
+  slickback  : { label: '💆 Слик бэк',          hairPrompt: "Change ONLY the hair into a slick back: all hair on top combed straight backward from forehead to nape in a smooth glossy wet-look flow, short faded sides." },
+  quiff      : { label: '🌟 Квифф',             hairPrompt: "Change ONLY the hair into a quiff: front section swept upward and back creating clear dramatic height and volume above the forehead, sides faded short." },
+  pompadour  : { label: '💈 Помпадур',          hairPrompt: "Change ONLY the hair into a pompadour: large volume swept dramatically upward and backward from the forehead, significant height at the front, sides tapered short." },
+  undercut   : { label: '✂️ Андеркат',          hairPrompt: "Change ONLY the hair into an undercut: sides and back shaved nearly to skin, top hair stays long (5-8cm) slicked or swept back, stark contrast line between short sides and longer top." },
+  fauxhawk   : { label: '🦅 Фохок',             hairPrompt: "Change ONLY the hair into a faux hawk: sides faded very short, strip of hair down the center of the head styled upward into a ridge, less extreme than a mohawk." },
+  // ── Средняя длина ──────────────────────────────────────────────────────────
+  twoblock   : { label: '🎌 Two-block',          hairPrompt: "Change ONLY the hair into a two-block cut: sides and back cut very short or faded, top left significantly longer (7-10cm) and styled forward or to the side, clear division between short sides and long top. Popular K-pop style." },
+  curtainmen : { label: '🪞 Кёртины (пробор)',   hairPrompt: "Change ONLY the hair into a curtain hairstyle: medium length hair (8-12cm) with a center part, falling to both sides and framing the face, natural flow, slightly wavy texture allowed." },
+  mullet     : { label: '🎸 Мулет',             hairPrompt: "Change ONLY the hair into a mullet: short cropped on the top and sides, distinctly longer in the back (reaching the nape or collar), clear contrast between short front/sides and longer back." },
+  // ── Кудри (три варианта) ───────────────────────────────────────────────────
+  curlyshort : { label: '🌀 Кудри короткие',    hairPrompt: "Change ONLY the hair into short curly hair: tight coils or defined curls all over the head, 2-4cm length, natural afro-textured or coily look." },
+  curlymed   : { label: '🌀 Кудри средние',     hairPrompt: "Change ONLY the hair into medium-length curly hair: defined bouncy curls 6-10cm long covering the top and sides, full volume, natural curl pattern." },
+  curlylong  : { label: '🌀 Кудри длинные',     hairPrompt: "Change ONLY the hair into long curly hair: loose big curls or waves reaching past the ears and neck, 12-18cm long, voluminous and flowing." },
+  // ── Длинные ────────────────────────────────────────────────────────────────
+  longback   : { label: '🧖 Длинные назад',     hairPrompt: "Change ONLY the hair to long hair (past shoulders) neatly slicked or tied back, sleek and straight, masculine long hairstyle." },
 };
 
 const FEMALE_STYLES = {
-  default     : { label: '✅ Свою причёску',   hairPrompt: "Keep the person's exact current hairstyle completely unchanged — same haircut, same length, same style. Only apply color changes if specified." },
-  wolfcut     : { label: '🐺 Волчья стрижка', hairPrompt: "Restyle this woman's hair into a trendy wolf cut shag: heavily layered haircut with curtain bangs, lots of volume at the crown and wispy textured ends, effortlessly cool look. Keep her as a woman." },
-  lob         : { label: '💁 Лоб (удл. каре)', hairPrompt: "Restyle this woman's hair into a long bob (lob): sleek straight hair cut just below the shoulders or at collarbone length with blunt ends. Keep her as a woman." },
-  bob         : { label: '✂️ Каре',            hairPrompt: "Restyle this woman's hair into a sleek classic bob: straight hair cut precisely to jaw length with blunt ends, chic feminine look. Keep her as a woman." },
-  curtainbangs: { label: '🎭 Шторки',          hairPrompt: "Add trendy curtain bangs: soft middle-parted wispy bangs that frame the face on both sides, keep the rest of the hair natural. Keep her as a woman." },
-  longstraight: { label: '👸 Длинные прямые',  hairPrompt: "Restyle this woman's hair into long straight silky hair flowing well past the shoulders, glamorous sleek feminine style. Keep her as a woman." },
-  layers      : { label: '🌿 Каскад',          hairPrompt: "Restyle this woman's hair into long layered cascading hair with soft flowing layers, volume and movement well past the shoulders. Keep her as a woman." },
-  butterfly   : { label: '🦋 Баттерфляй',     hairPrompt: "Restyle this woman's hair into a butterfly haircut: shorter face-framing layers at the crown creating wings and volume, longer layers below for a dramatic trendy style. Keep her as a woman." },
-  curly       : { label: '🌊 Локоны',          hairPrompt: "Restyle this woman's hair into long beautiful curly hair with defined bouncy feminine curls flowing past the shoulders. Keep her as a woman." },
-  pixie       : { label: '💫 Пикси',           hairPrompt: "Restyle this woman's hair into a chic pixie cut: very short hair with slightly longer textured pieces on top, edgy modern feminine style. Keep her as a woman." },
-  ponytail    : { label: '🎀 Хвостик',         hairPrompt: "Restyle this woman's hair into a sleek high ponytail: all hair pulled back smoothly and tied high on the head, polished feminine look. Keep her as a woman." },
+  // ── Сохранить ──────────────────────────────────────────────────────────────
+  default     : { label: '✅ Свою причёску',    hairPrompt: "Keep the exact current hairstyle completely unchanged — same haircut, same length, same style. Only apply color changes if specified." },
+  // ── Короткие ───────────────────────────────────────────────────────────────
+  pixie       : { label: '💫 Пикси',            hairPrompt: "Change ONLY the hair into a pixie cut: very short all over (2-4cm), slightly longer textured pieces on top, edgy modern style." },
+  frenchbob   : { label: '🥐 Французское каре', hairPrompt: "Change ONLY the hair into a French bob: short blunt bob cut at chin level or just above, voluminous rounded shape, often with a fringe." },
+  // ── Каре (bob family) ──────────────────────────────────────────────────────
+  bob         : { label: '✂️ Каре',             hairPrompt: "Change ONLY the hair into a classic bob: straight hair cut precisely to jaw length with blunt ends, sleek and symmetrical." },
+  angledBob   : { label: '📐 Каре с удлинением', hairPrompt: "Change ONLY the hair into an angled bob: shorter in the back and gradually longer toward the front, sleek diagonal line, sophisticated look." },
+  lob         : { label: '💁 Лоб (удл. каре)',  hairPrompt: "Change ONLY the hair into a long bob (lob): sleek straight hair cut at collarbone length with blunt ends." },
+  // ── Средняя длина ──────────────────────────────────────────────────────────
+  curtainbangs: { label: '🎭 Шторки',           hairPrompt: "Add ONLY curtain bangs to the existing hair: soft middle-parted wispy bangs framing the face on both sides, keep all other hair unchanged." },
+  shag        : { label: '🪨 Шэг',              hairPrompt: "Change ONLY the hair into a shag haircut: choppy layered hair at medium length with lots of texture, wispy ends, and airy volume throughout, piece-y curtain bangs optional." },
+  wolfcut     : { label: '🐺 Волчья стрижка',  hairPrompt: "Change ONLY the hair into a wolf cut shag: heavily layered with curtain bangs, lots of volume at the crown, wispy textured ends at medium length." },
+  butterfly   : { label: '🦋 Баттерфляй',      hairPrompt: "Change ONLY the hair into a butterfly cut: shorter face-framing layers at the crown creating wings and visible volume, longer layers below for a dramatic contrast." },
+  // ── Длинные ────────────────────────────────────────────────────────────────
+  longstraight: { label: '👸 Длинные прямые',   hairPrompt: "Change ONLY the hair to long straight silky hair flowing well past the shoulders, smooth and sleek." },
+  layers      : { label: '🌿 Каскад',           hairPrompt: "Change ONLY the hair into long layered cascading hair with soft flowing layers, volume and movement well past the shoulders." },
+  bluntlong   : { label: '📏 Длинные ровные',   hairPrompt: "Change ONLY the hair to long one-length blunt cut: all hair the same length falling straight past the shoulders, no layers, strong blunt ends." },
+  // ── Кудри и волны ──────────────────────────────────────────────────────────
+  curlylong   : { label: '🌊 Локоны длинные',   hairPrompt: "Change ONLY the hair to long curly: big defined bouncy curls flowing well past the shoulders, glamorous volume." },
+  curlymed    : { label: '🌀 Локоны средние',   hairPrompt: "Change ONLY the hair to medium-length curly hair: defined curls reaching the chin or shoulders, full and springy." },
+  beachwaves  : { label: '🏄 Пляжные волны',    hairPrompt: "Change ONLY the hair into beach waves: loose effortless waves at medium-to-long length, natural tousled texture, lived-in look." },
+  // ── Укладки ────────────────────────────────────────────────────────────────
+  ponytail    : { label: '🎀 Хвостик',          hairPrompt: "Change ONLY the hair into a sleek high ponytail: all hair pulled back smoothly and tied high on the head, no loose strands." },
+  bun         : { label: '🩰 Пучок',            hairPrompt: "Change ONLY the hair into a neat high bun: all hair twisted and pinned high on the crown of the head, polished and elegant." },
+  braid       : { label: '🧶 Коса',             hairPrompt: "Change ONLY the hair into a side braid: a thick classic three-strand braid falling over one shoulder, rest of hair tucked in." },
 };
 
 const HAIR_COLORS = {
@@ -169,6 +206,13 @@ export default {
     ctx.waitUntil(pollPendingJobs(env));           // every minute: deliver completed fal.ai jobs
     ctx.waitUntil(checkExpiredSubscriptions(env)); // daily: mark expired, notify owners
     ctx.waitUntil(resetMonthlyGenerations(env));   // 1st of month: reset monthly counters
+    // Once per day at 10:00 UTC
+    const h = new Date().getUTCHours();
+    const m = new Date().getUTCMinutes();
+    if (h === 10 && m < 2) {
+      ctx.waitUntil(checkFalBudget(env));
+      ctx.waitUntil(checkExpiringSubscriptions(env));
+    }
   },
 };
 
@@ -253,6 +297,30 @@ async function checkExpiredSubscriptions(env) {
   }
 }
 
+// ─── Daily: warn owners 3 days before subscription expires ───────────────────
+async function checkExpiringSubscriptions(env) {
+  const in3days = new Date();
+  in3days.setUTCDate(in3days.getUTCDate() + 3);
+  const targetDate = in3days.toISOString().slice(0, 10);
+
+  const { results: salons } = await env.beauty_ai_db
+    .prepare(`SELECT * FROM salons WHERE paid_until = ? AND status IN ('standard_active','premium_active')`)
+    .bind(targetDate).all();
+
+  for (const salon of salons) {
+    const name     = salon.name || salon.salon_name || 'Ваш салон';
+    const tgToken  = isValidTgToken(salon.bot_token) ? salon.bot_token : env.STANDARD_BOT_TOKEN;
+    if (!tgToken || !salon.admin_chat_id) continue;
+    await sendMessage(tgToken, salon.admin_chat_id,
+      `⏰ *Подписка истекает через 3 дня!*\n\n` +
+      `Тариф *${name}* заканчивается *${salon.paid_until}*.\n\n` +
+      `Продлите сейчас — клиенты не потеряют доступ к ИИ-примерке:`,
+      tariffKeyboard()
+    );
+    console.log(`[cron] expiry warning sent for salon ${salon.id} (paid_until=${salon.paid_until})`);
+  }
+}
+
 // ─── 1st of month: reset monthly generation counters ─────────────────────────
 async function resetMonthlyGenerations(env) {
   const { results: due } = await env.beauty_ai_db
@@ -286,6 +354,48 @@ async function resetMonthlyGenerations(env) {
     );
     console.log(`[cron] reset monthly count for salon ${salon.id}, next reset: ${nextResetStr}`);
   }
+}
+
+// ─── Daily: check estimated fal.ai spend and alert if over threshold ─────────
+async function checkFalBudget(env) {
+  const row = await env.beauty_ai_db
+    .prepare(`SELECT SUM(monthly_generations_count) AS total_gens FROM salons
+              WHERE status IN ('standard_active','premium_active','trial')`)
+    .first();
+
+  const totalGens  = row?.total_gens ?? 0;
+  const spentUsd   = totalGens * 0.04;
+  const threshold  = parseFloat(env.FAL_ALERT_THRESHOLD_USD ?? '20');
+
+  console.log(`[fal-budget] ~$${spentUsd.toFixed(2)} spent this month (${totalGens} gens), threshold $${threshold}`);
+
+  if (spentUsd < threshold) return;
+
+  const adminToken = env.ADMIN_BOT_TOKEN ?? env.STANDARD_BOT_TOKEN;
+  if (!env.ADMIN_USER_ID || !adminToken) return;
+
+  // Build per-salon breakdown (top spenders)
+  const { results: salons } = await env.beauty_ai_db
+    .prepare(`SELECT salon_name, monthly_generations_count
+              FROM salons
+              WHERE monthly_generations_count > 0
+              ORDER BY monthly_generations_count DESC
+              LIMIT 10`)
+    .all();
+
+  let breakdown = '';
+  for (const s of salons) {
+    const cost = (s.monthly_generations_count * 0.04).toFixed(2);
+    breakdown += `• ${s.salon_name}: ${s.monthly_generations_count} ген. (~$${cost})\n`;
+  }
+
+  await sendMessage(adminToken, String(env.ADMIN_USER_ID),
+    `⚠️ *Расходы fal.ai превысили порог $${threshold}*\n\n` +
+    `Этот месяц потрачено: *~$${spentUsd.toFixed(2)}* (${totalGens} генераций)\n\n` +
+    `📊 *Топ салонов по расходам:*\n${breakdown}\n` +
+    `👉 Пополни баланс на [fal.ai/settings/billing](https://fal.ai/settings/billing)\n\n` +
+    `_Порог можно изменить через переменную FAL\\_ALERT\\_THRESHOLD\\_USD_`
+  );
 }
 
 // Deletes generated files from fal.ai CDN storage immediately after delivery
@@ -370,6 +480,22 @@ function isValidTgToken(token) {
   return /^\d+:[A-Za-z0-9_-]{35,}$/.test(token ?? '');
 }
 
+// ─── Multi-admin support ──────────────────────────────────────────────────────
+// Primary admin(s) come from ADMIN_USER_ID (comma-separated).
+// Extra admins can be added/removed via the panel and are stored in the admins table.
+function getPrimaryAdminIds(env) {
+  if (!env.ADMIN_USER_ID) return [];
+  return String(env.ADMIN_USER_ID).split(',').map(s => s.trim()).filter(Boolean);
+}
+
+async function isAdminId(env, userId) {
+  if (getPrimaryAdminIds(env).includes(String(userId))) return true;
+  const row = await env.beauty_ai_db
+    .prepare('SELECT 1 FROM admins WHERE user_id = ?')
+    .bind(String(userId)).first();
+  return !!row;
+}
+
 // Generates a URL-safe slug from a salon name + 4-char random suffix.
 function generateSlug(name) {
   const base = (name || 'salon')
@@ -404,7 +530,8 @@ function ownerMenuKeyboard() {
   return {
     keyboard: [
       ['📋 Тариф', '📢 Рассылка'],
-      ['📷 QR-код клиентам'],
+      ['📷 QR-код клиентам', '⚙️ Настройки'],
+      ['📊 Статистика', '💬 Поддержка'],
     ],
     resize_keyboard: true,
     persistent: true,
@@ -442,6 +569,15 @@ async function sendQrCode(botToken, chatId, url) {
   );
   form.append('parse_mode', 'Markdown');
   await fetch(`${TELEGRAM_API}/bot${botToken}/sendPhoto`, { method: 'POST', body: form });
+}
+
+// prefix determines which callback handler receives the tap (b2b_type | trial_type | sedit_type)
+function salonTypeKeyboard(prefix) {
+  return { inline_keyboard: [
+    [{ text: '✂️ Барбершоп / Стрижки',     callback_data: `${prefix}_barber` }],
+    [{ text: '💄 Макияж / Студия красоты', callback_data: `${prefix}_makeup` }],
+    [{ text: '💅 Ногти / Маникюр',          callback_data: `${prefix}_nails`  }],
+  ]};
 }
 
 function tariffKeyboard() {
@@ -560,13 +696,65 @@ async function handleUpdate(update, salon, env) {
         return;
       }
 
+      if (message.text === '/settings' || message.text === '⚙️ Настройки') {
+        const curMax = salon.max_images ?? 3;
+        await sendMessage(botToken, chatId, '⚙️ *Настройки салона*\n\nЧто изменить?', {
+          inline_keyboard: [
+            [{ text: '✏️ Название',                       callback_data: 'sedit_name'  }],
+            [{ text: '📱 WhatsApp',                       callback_data: 'sedit_phone' }],
+            [{ text: '🏷️ Тип салона',                    callback_data: 'sedit_type'  }],
+            [{ text: `🎯 Примерок на клиента: ${curMax}`, callback_data: 'sedit_max'   }],
+          ],
+        });
+        return;
+      }
+
+      if (message.text === '/stats' || message.text === '📊 Статистика') {
+        const [totalRow, activeRow] = await Promise.all([
+          env.beauty_ai_db.prepare('SELECT COUNT(DISTINCT user_id) AS cnt FROM users WHERE salon_id = ?').bind(salon.id).first(),
+          env.beauty_ai_db.prepare('SELECT COUNT(DISTINCT user_id) AS cnt FROM users WHERE salon_id = ? AND image_count > 0').bind(salon.id).first(),
+        ]);
+        const used   = salon.monthly_generations_count ?? 0;
+        const limit  = salon.max_allowed_generations ?? 0;
+        const maxImg = salon.max_images ?? 3;
+        const paidLine = salon.paid_until ? `\n📅 Подписка до: *${salon.paid_until}*` : '';
+        await sendMessage(botToken, chatId,
+          `📊 *Статистика — ${salon.name ?? salon.salon_name}*\n\n` +
+          `👥 Всего клиентов: *${totalRow?.cnt ?? 0}*\n` +
+          `✅ Делали примерку: *${activeRow?.cnt ?? 0}*\n\n` +
+          `🎨 Генераций этот месяц: *${used} / ${limit}*\n` +
+          `🎯 Лимит примерок на клиента: *${maxImg}*` +
+          paidLine
+        );
+        return;
+      }
+
+      if (message.text === '💬 Поддержка') {
+        const supportLink = env.SUPPORT_TG_LINK ?? 'https://t.me/BeautyAI_Support';
+        await sendMessage(botToken, chatId,
+          `💬 *Поддержка Beauty AI*\n\nЕсли возникли вопросы по тарифу, боту или оплате — напишите нам:\n\n👉 ${supportLink}`
+        );
+        return;
+      }
+
       if ([S.SALON_PUSH_TEXT, S.SALON_PUSH_BUTTONS, S.SALON_PUSH_CONFIRM].includes(state)) {
         await handleSalonPushMessage(message, salon, tempData, env, botToken, chatId, userId);
         return;
       }
 
+      if ([S.SALON_EDIT_NAME, S.SALON_EDIT_PHONE].includes(state)) {
+        await handleSalonEdit(message, salon, state, env, botToken, chatId, userId);
+        return;
+      }
+
       // Any other message → show owner panel menu
       await showOwnerPanel(botToken, chatId, salon);
+      return;
+    }
+
+    // Trial owner who has finished the test-drive — show tariff selector
+    if (state === S.DONE) {
+      await showB2bTariffSelector(botToken, chatId, env);
       return;
     }
     // Trial: owner continues below as a regular client
@@ -598,9 +786,13 @@ async function handleUpdate(update, salon, env) {
 
   if (message.text === '/start') {
     const maxImages = salon.max_images ?? 3;
-    // At limit — show CTA, never reset the counter
+    // At limit — show CTA or tariff selector for trial owners
     if ((user.image_count ?? 0) >= maxImages) {
-      await sendOfferMessage(botToken, chatId, salon);
+      if (salon.status === 'trial' && String(chatId) === String(salon.admin_chat_id)) {
+        await showB2bTariffSelector(botToken, chatId, env);
+      } else {
+        await sendOfferMessage(botToken, chatId, salon);
+      }
       return;
     }
     // Already processing — don't interrupt
@@ -625,7 +817,7 @@ async function handleUpdate(update, salon, env) {
       const photoStates = { barber: S.WAITING_SELFIE, makeup: S.WAITING_FACE, nails: S.WAITING_HAND };
       await setState(env, userId, botToken, photoStates[salon.salon_type] ?? S.WAITING_SELFIE, {});
     } else {
-      await onStart(message, salon, botToken, chatId);
+      await onStart(message, salon, botToken, chatId, env);
       await setState(env, userId, botToken, S.WAITING_CONTACT, {});
     }
     return;
@@ -688,13 +880,13 @@ async function handleUpdate(update, salon, env) {
 //   5. /start (no slug)     → resume if already associated
 //   6. Any other message    → route via stored salon_id
 async function handleStandardUpdate(update, env) {
-  const botToken = env.STANDARD_BOT_TOKEN;
+  const botToken = env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN;
 
   // ── Platform admin: route to admin panel ─────────────────────────────────
   const senderId = String(
     (update.message ?? update.edited_message ?? update.callback_query)?.from?.id ?? ''
   );
-  if (env.ADMIN_USER_ID && senderId === String(env.ADMIN_USER_ID)) {
+  if (await isAdminId(env, senderId)) {
     await handleAdminUpdate(update, env);
     return;
   }
@@ -730,6 +922,26 @@ async function handleStandardUpdate(update, env) {
           `_Напишите: «Хочу подключить личного бота» — вам ответят в течение нескольких часов._`
         );
       }
+      return;
+    }
+
+    // B2B type selection during onboarding
+    if (cq.data?.startsWith('b2b_type_')) {
+      await fetch(`${TELEGRAM_API}/bot${botToken}/answerCallbackQuery`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ callback_query_id: cq.id }),
+      });
+      const typeRow = await env.beauty_ai_db
+        .prepare('SELECT state, temp_data FROM user_states WHERE user_id = ? AND bot_token = ?')
+        .bind(userId, botToken).first();
+      if ((typeRow?.state ?? '') !== S.B2B_TYPE) return;
+      const typeTmp = JSON.parse(typeRow?.temp_data ?? '{}');
+      const salonType = cq.data.replace('b2b_type_', '');
+      const typeNames = { barber: 'Барбершоп / Стрижки', makeup: 'Макияж / Студия красоты', nails: 'Ногти / Маникюр' };
+      await setState(env, userId, botToken, S.B2B_PHONE, { ...typeTmp, salon_type: salonType });
+      await sendMessage(botToken, chatId,
+        `✅ Тип: *${typeNames[salonType] ?? salonType}*\n\n📱 Введите WhatsApp-номер салона (только цифры):\n_Например: 77001112233_`
+      );
       return;
     }
 
@@ -829,13 +1041,11 @@ async function handleStandardUpdate(update, env) {
           .bind(userId, botToken).run();
         await setState(env, userId, botToken, S.B2B_NAME, { source_track: slug });
         await sendMessage(botToken, chatId,
-          `👋 Привет! Я помогу подключить ИИ-ассистента для вашего барбершопа или салона.\n\n` +
-          `*За 3 минуты вы увидите как это работает изнутри.*\n\n` +
-          `🎯 Как происходит:\n` +
-          `1. Вводите данные салона\n` +
-          `2. Делаете 3 тестовые генерации как ваш клиент\n` +
-          `3. Выбираете пакет подписки\n\n` +
-          `✍️ Введите *название* вашего салона или барбершопа:`
+          `✂️ *Beauty AI — ИИ-примерка причёсок для вашего салона*\n\n` +
+          `Ваши клиенты смогут примерить стрижку или маникюр прямо в Telegram — до записи к вам.\n\n` +
+          `*Сейчас вы пройдёте через это сами — как ваш клиент.*\n` +
+          `Займёт 3 минуты.\n\n` +
+          `✍️ Как называется ваш салон?`
         );
         return;
       }
@@ -876,9 +1086,19 @@ async function handleStandardUpdate(update, env) {
       await env.beauty_ai_db
         .prepare('INSERT OR IGNORE INTO users (user_id, bot_token, salon_id, image_count) VALUES (?, ?, ?, 0)')
         .bind(userId, botToken, activeSalon.id).run();
-      await env.beauty_ai_db
-        .prepare('UPDATE users SET salon_id = ? WHERE user_id = ? AND bot_token = ?')
-        .bind(activeSalon.id, userId, botToken).run();
+      // Reset image_count if client moved to a different salon
+      const existingUser = await env.beauty_ai_db
+        .prepare('SELECT salon_id FROM users WHERE user_id = ? AND bot_token = ?')
+        .bind(userId, botToken).first();
+      if (existingUser && String(existingUser.salon_id) !== String(activeSalon.id)) {
+        await env.beauty_ai_db
+          .prepare('UPDATE users SET salon_id = ?, image_count = 0 WHERE user_id = ? AND bot_token = ?')
+          .bind(activeSalon.id, userId, botToken).run();
+      } else {
+        await env.beauty_ai_db
+          .prepare('UPDATE users SET salon_id = ? WHERE user_id = ? AND bot_token = ?')
+          .bind(activeSalon.id, userId, botToken).run();
+      }
 
       const startUpdate = { ...update, message: { ...message, text: '/start' } };
       await handleUpdate(startUpdate, { ...activeSalon, bot_token: botToken }, env);
@@ -906,7 +1126,7 @@ async function handleStandardUpdate(update, env) {
 
 // ─── Trial salon creation ─────────────────────────────────────────────────────
 
-async function createTrialSalon(env, name, phone, sourceTrack = 'direct', adminChatId = null) {
+async function createTrialSalon(env, name, phone, sourceTrack = 'direct', adminChatId = null, salonType = 'barber') {
   let slug;
   for (let i = 0; i < 5; i++) {
     slug = generateSlug(name);
@@ -923,9 +1143,9 @@ async function createTrialSalon(env, name, phone, sourceTrack = 'direct', adminC
         (slug, bot_token, status, name, salon_name, salon_type,
          whatsapp_phone, admin_chat_id, max_images, max_allowed_generations,
          monthly_generations_count, source_track)
-      VALUES (?, ?, 'trial', ?, ?, 'barber', ?, ?, 3, 3, 0, ?)
+      VALUES (?, ?, 'trial', ?, ?, ?, ?, ?, 3, 3, 0, ?)
     `)
-    .bind(slug, syntheticToken, name, name, phone,
+    .bind(slug, syntheticToken, name, name, salonType, phone,
           adminChatId ? String(adminChatId) : '0', sourceTrack ?? null)
     .run();
 
@@ -942,9 +1162,9 @@ async function handleB2bOnboarding(message, env, userId, chatId, botToken, state
       await sendMessage(botToken, chatId, '✍️ Введите название вашего салона или барбершопа:');
       return;
     }
-    await setState(env, userId, botToken, S.B2B_PHONE, { ...tempData, b2b_name: text });
+    await setState(env, userId, botToken, S.B2B_PHONE, { ...tempData, b2b_name: text, salon_type: 'barber' });
     await sendMessage(botToken, chatId,
-      `✅ *${text}*\n\n📱 Введите WhatsApp-номер салона (только цифры):\n_Например: 77001112233_`
+      `✅ *${text}*\n\n📱 Введите *WhatsApp-номер* для связи с клиентами:\n_(только цифры, например: \`77001112233\`)_`
     );
     return;
   }
@@ -959,7 +1179,8 @@ async function handleB2bOnboarding(message, env, userId, chatId, botToken, state
     }
 
     const sourceTrack = tempData.source_track ?? 'b2b_direct';
-    const salon = await createTrialSalon(env, tempData.b2b_name, phone, sourceTrack, userId);
+    const salonType   = tempData.salon_type ?? 'barber';
+    const salon = await createTrialSalon(env, tempData.b2b_name, phone, sourceTrack, userId, salonType);
 
     await env.beauty_ai_db
       .prepare('INSERT OR IGNORE INTO users (user_id, bot_token, salon_id, image_count) VALUES (?, ?, ?, 0)')
@@ -968,30 +1189,44 @@ async function handleB2bOnboarding(message, env, userId, chatId, botToken, state
       .prepare('UPDATE users SET salon_id = ? WHERE user_id = ? AND bot_token = ?')
       .bind(salon.id, userId, botToken).run();
 
+    const typeHints = {
+      barber: '📸 Пришлите *СЕЛФИ* лица — подберём причёску!',
+      makeup: '📸 Пришлите *ФОТО лица* — подберём макияж!',
+      nails:  '📸 Пришлите *ФОТО рук* ладонями вверх — подберём маникюр!',
+    };
+    const firstStates = { barber: S.WAITING_SELFIE, makeup: S.WAITING_FACE, nails: S.WAITING_HAND };
+
     await sendMessage(botToken, chatId,
       `🎉 *${salon.name}* — тест-драйв запущен!\n\n` +
       `Вы попробуете бота *как ваш клиент* — доступно *3 бесплатных генерации*.\n\n` +
-      `📸 Пришлите *СЕЛФИ* лица — подберём причёску!`
+      `${typeHints[salonType] ?? typeHints.barber}`
     );
-    await setState(env, userId, botToken, S.WAITING_SELFIE, {});
+    await setState(env, userId, botToken, firstStates[salonType] ?? S.WAITING_SELFIE, {});
   }
 }
 
 // ─── B2B tariff / package selector (shown after trial ends) ──────────────────
 
-async function showB2bTariffSelector(botToken, chatId) {
+async function showB2bTariffSelector(botToken, chatId, env) {
+  const supportLink = env?.SUPPORT_TG_LINK ?? 'https://t.me/BeautyAI_Support';
   await sendMessage(botToken, chatId,
     `🎉 *Тест-драйв завершён!*\n\n` +
-    `Вы увидели как работает ИИ-ассистент для клиентов вашего салона.\n\n` +
+    `Вы только что увидели что получат ваши клиенты — они смогут примерять стрижки и образы прямо в Telegram, ещё до записи.\n\n` +
     `━━━━━━━━━━━━━━━━━━━━━\n` +
-    `📦 *Пакеты подписки (в месяц):*\n\n` +
-    `🟢 Мини — 150 ген. — ₸9,900\n` +
-    `🔵 Стандарт — 300 ген. — ₸14,900\n` +
-    `🟣 Бизнес — 600 ген. — ₸24,900\n` +
-    `⭐ Сеть — 1 200 ген. — ₸44,900\n\n` +
-    `🤖 *Тип размещения:*\n` +
-    `• В общем боте — бесплатно\n` +
-    `• В своём боте — +₸25,000\n\n` +
+    `📦 *Подписка — оплата раз в месяц через Kaspi:*\n\n` +
+    `🟢 *Мини — ₸9,900/мес*\n` +
+    `└ До ~50 клиентов в месяц\n\n` +
+    `🔵 *Стандарт — ₸14,900/мес*\n` +
+    `└ До ~100 клиентов в месяц\n\n` +
+    `🟣 *Бизнес — ₸24,900/мес*\n` +
+    `└ До ~200 клиентов в месяц\n\n` +
+    `⭐ *Сеть — ₸44,900/мес*\n` +
+    `└ До ~400 клиентов в месяц\n\n` +
+    `📌 _Расчёт клиентов указан из расчёта 3 примерки на человека. В настройках вы сами выставляете нужное число._\n\n` +
+    `━━━━━━━━━━━━━━━━━━━━━\n` +
+    `🤖 *Про своего бота:*\n` +
+    `Без своего бота — ваши клиенты пишут в общий бот @qrbeatyai\\_bot по вашей ссылке.\n` +
+    `Со своим ботом — у вас отдельный бот с вашим именем, например @chopchop\\_almaty\\_bot.\n\n` +
     `Выберите подходящий пакет 👇`,
     { inline_keyboard: [
       [
@@ -1003,6 +1238,7 @@ async function showB2bTariffSelector(botToken, chatId) {
         { text: '⭐ Сеть · ₸44,900',     callback_data: 'b2b_pkg_net_shared'   },
       ],
       [{ text: '🤖 Хочу свой бот (+₸25,000)', callback_data: 'b2b_hosting_own' }],
+      [{ text: '💬 Написать в поддержку',      url: supportLink                 }],
     ]}
   );
 }
@@ -1010,8 +1246,11 @@ async function showB2bTariffSelector(botToken, chatId) {
 async function handleB2bPackageCallback(data, botToken, chatId, userId, env) {
   if (data === 'b2b_hosting_own') {
     await sendMessage(botToken, chatId,
-      `🤖 *Свой бот (+₸25,000)*\n\n` +
-      `К стоимости любого пакета добавляется ₸25,000 за создание и настройку личного бота.\n\n` +
+      `🤖 *Свой личный бот (+₸25,000)*\n\n` +
+      `Это значит: у вас будет отдельный бот с именем вашего салона.\n` +
+      `Например, не @qrbeatyai\\_bot, а @chopchop\\_almaty\\_bot.\n\n` +
+      `Клиенты видят именно ваш бренд — выглядит профессионально.\n\n` +
+      `К месячной подписке добавляется разовый платёж ₸25,000.\n\n` +
       `Выберите пакет подписки 👇`,
       { inline_keyboard: [
         [
@@ -1030,14 +1269,18 @@ async function handleB2bPackageCallback(data, botToken, chatId, userId, env) {
   const pkg = B2B_PACKAGES[data];
   if (!pkg) return;
 
-  const hosting = pkg.own ? ' + свой бот' : ' (в общем боте)';
+  const clientsPerMonth = Math.round(pkg.gens / 3);
+  const hostingDesc = pkg.own
+    ? 'Личный бот с именем вашего салона'
+    : `Общий бот @qrbeatyai\\_bot по вашей ссылке`;
 
   await sendMessage(botToken, chatId,
     `✅ Отличный выбор!\n\n` +
-    `📦 *${pkg.name}${hosting}*\n` +
-    `📊 ${pkg.gens} генераций в месяц\n` +
-    `💳 Сумма: *₸${pkg.price.toLocaleString('ru')}*\n\n` +
-    `Нажмите кнопку ниже, чтобы указать номер для выставления счета Kaspi:`,
+    `📦 *Пакет «${pkg.name}»*\n` +
+    `👥 До ~${clientsPerMonth} клиентов в месяц\n` +
+    `🤖 ${hostingDesc}\n` +
+    `💳 *₸${pkg.price.toLocaleString('ru')} в месяц*\n\n` +
+    `Нажмите кнопку ниже — мы выставим счёт на оплату через Kaspi:`,
     { inline_keyboard: [[{ text: '💳 Оплатить через Kaspi', callback_data: `b2b_pay_${data}` }]] }
   );
 }
@@ -1082,7 +1325,7 @@ async function handleB2bAwaitingPhone(message, env, userId, chatId, botToken, te
 
   // Notify admin to send Kaspi invoice
   if (env.ADMIN_USER_ID) {
-    await sendMessage(env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN, String(env.ADMIN_USER_ID),
+    await sendMessage(env.ADMIN_BOT_TOKEN ?? env.STANDARD_BOT_TOKEN, String(env.ADMIN_USER_ID),
       `💳 *Выставить счет Kaspi*\n\n` +
       `Пакет: *${pkgName}${pkg?.own ? ' + свой бот' : ''}*\n` +
       `Сумма: *₸${price.toLocaleString('ru')}*\n` +
@@ -1125,7 +1368,7 @@ async function handleB2bCheque(message, env, userId, chatId, botToken, tempData)
     { text: '❌ Отклонить',  callback_data: `pno:${userId}` },
   ]]});
 
-  const adminToken = env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN;
+  const adminToken = env.ADMIN_BOT_TOKEN ?? env.STANDARD_BOT_TOKEN;
   const form = new FormData();
   form.append('chat_id', String(env.ADMIN_USER_ID));
   form.append('caption', caption);
@@ -1161,20 +1404,72 @@ async function handleB2bToken(message, env, userId, chatId, botToken, tempData) 
     return;
   }
 
-  // Forward to admin with "Launch" button
-  const adminToken = env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN;
-  await sendMessage(adminToken, String(env.ADMIN_USER_ID),
-    `🤖 *Токен Premium-бота*\n\nChat ID: \`${chatId}\`\nПакет: *${tempData.pkg_name ?? '—'}*\n\nТокен:\n\`${token}\``,
-    { inline_keyboard: [[
-      { text: '🚀 Запустить бота клиента', callback_data: `pla:${userId}` },
-    ]]}
-  );
+  await sendMessage(botToken, chatId, '⏳ Проверяем токен...');
 
-  await setState(env, userId, botToken, S.B2B_AWAITING_TOKEN, { ...tempData, premium_token: token });
+  // Validate the token via Telegram
+  const meResp = await fetch(`${TELEGRAM_API}/bot${token}/getMe`);
+  const meData = await meResp.json();
+  if (!meData.ok) {
+    await sendMessage(botToken, chatId,
+      `❌ Токен недействителен: _${meData.description}_\n\nПроверьте токен в @BotFather и попробуйте ещё раз:`
+    );
+    return;
+  }
+  const botUsername = meData.result.username;
 
-  await sendMessage(botToken, chatId,
-    `✅ Токен принят!\n\nМы разворачиваем вашего персонального бота — это займёт пару минут. Ожидайте уведомления здесь. 🚀`
+  // Check for conflicts
+  const conflict = await env.beauty_ai_db
+    .prepare('SELECT id FROM salons WHERE bot_token = ?').bind(token).first();
+  if (conflict) {
+    await sendMessage(botToken, chatId,
+      '❌ Этот токен уже используется другим салоном.\n\nСоздайте нового бота в @BotFather и пришлите его токен:'
+    );
+    return;
+  }
+
+  // Find the owner's salon
+  const salon = await env.beauty_ai_db
+    .prepare('SELECT * FROM salons WHERE admin_chat_id = ?').bind(userId).first();
+  if (!salon) {
+    await sendMessage(botToken, chatId, '❌ Салон не найден. Обратитесь в поддержку.');
+    return;
+  }
+
+  // Register webhook for the new premium bot
+  const workerUrl  = env.WORKER_URL.replace(/\/$/, '');
+  const webhookUrl = `${workerUrl}/webhook/${encodeURIComponent(token)}`;
+  const whResp = await fetch(`${TELEGRAM_API}/bot${token}/setWebhook`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: webhookUrl, allowed_updates: ['message', 'callback_query'] }),
+  });
+  const whData = await whResp.json();
+  if (!whData.ok) {
+    await sendMessage(botToken, chatId, `⚠️ Не удалось зарегистрировать вебхук: ${whData.description}\n\nОбратитесь в поддержку.`);
+    return;
+  }
+
+  // Update salon to use the new premium token
+  await env.beauty_ai_db
+    .prepare('UPDATE salons SET bot_token = ? WHERE id = ?')
+    .bind(token, salon.id).run();
+
+  // Clear owner state on the standard bot
+  await setState(env, userId, botToken, 'start', {});
+
+  const botLink = `https://t.me/${botUsername}`;
+  await sendMessage(botToken, userId,
+    `🚀 *Ваш личный бот подключён!*\n\nБот: @${botUsername}\n\n🔗 Ссылка для клиентов:\n\`${botLink}\`\n\nПоделитесь ею с клиентами — они сразу попадут к вашему боту.`,
+    ownerMenuKeyboard()
   );
+  await sendQrCode(botToken, userId, botLink);
+
+  // Notify admin for audit trail
+  if (env.ADMIN_USER_ID) {
+    const adminToken = env.ADMIN_BOT_TOKEN ?? env.STANDARD_BOT_TOKEN;
+    await sendMessage(adminToken, String(env.ADMIN_USER_ID),
+      `🤖 *Самоподключение Premium-бота*\n\nВладелец: \`${userId}\`\nСалон: *${salon.name ?? salon.salon_name}*\nБот: @${botUsername}`
+    );
+  }
 }
 
 // ─── Admin B2B payment confirmation ──────────────────────────────────────────
@@ -1233,23 +1528,23 @@ async function confirmB2bPayment(env, adminChatId, data) {
       ]]}
     );
   } else {
-    // Shared: activate and show salon panel with client link
+    // Shared: activate and show salon panel, then send QR + client link
     await setState(env, userId, botToken, 'start', {});
     const botUsername = env.STANDARD_BOT_USERNAME ?? 'qrbeatyai_bot';
     const clientLink  = salon?.slug
       ? `https://t.me/${botUsername}?start=${salon.slug}`
       : null;
-    const linkLine = clientLink
-      ? `\n\n🔗 *Ссылка для ваших клиентов:*\n\`${clientLink}\`\n\n_Поделитесь ею в Instagram, WhatsApp, визитках._`
-      : '';
     await sendMessage(botToken, userId,
       `🎉 *Оплата подтверждена! Пакет "${pkg?.name ?? 'выбранный'}" активирован.*\n\n` +
-      `Ваш ИИ-ассистент готов к работе!${linkLine}`,
+      `Ваш ИИ-ассистент готов к работе! Клиенты уже могут пользоваться им.`,
       ownerMenuKeyboard()
     );
+    if (clientLink) {
+      await sendQrCode(botToken, userId, clientLink);
+    }
   }
 
-  const adminToken = env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN;
+  const adminToken = env.ADMIN_BOT_TOKEN ?? env.STANDARD_BOT_TOKEN;
   await sendMessage(adminToken, adminChatId, `✅ Оплата подтверждена для пользователя \`${userId}\`.`);
 }
 
@@ -1262,7 +1557,7 @@ async function rejectB2bPayment(env, adminChatId, data) {
     `❌ *Оплата не подтверждена.*\n\nПожалуйста, свяжитесь с поддержкой для уточнения деталей.`
   );
 
-  const adminToken = env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN;
+  const adminToken = env.ADMIN_BOT_TOKEN ?? env.STANDARD_BOT_TOKEN;
   await sendMessage(adminToken, adminChatId, `❌ Оплата отклонена для пользователя \`${userId}\`.`);
 }
 
@@ -1293,20 +1588,56 @@ async function launchB2bPremiumBot(env, adminChatId, data) {
     ownerMenuKeyboard()
   );
 
-  const adminToken = env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN;
+  const adminToken = env.ADMIN_BOT_TOKEN ?? env.STANDARD_BOT_TOKEN;
   await sendMessage(adminToken, adminChatId, `✅ Бот клиента \`${userId}\` успешно запущен.`);
 }
 
 // ─── /start ──────────────────────────────────────────────────────────────────
-async function onStart(message, salon, botToken, chatId) {
-  const name = message.from.first_name || 'друг';
+async function onStart(message, salon, botToken, chatId, env) {
+  const maxImages = salon.max_images ?? 3;
+
+  // Send example photos if configured (uploaded via admin bot with caption "welcome1"/"welcome2")
+  const [row1, row2] = await Promise.all([
+    env.beauty_ai_db.prepare("SELECT value FROM settings WHERE key = 'welcome_photo_1'").first(),
+    env.beauty_ai_db.prepare("SELECT value FROM settings WHERE key = 'welcome_photo_2'").first(),
+  ]);
+  const adminToken = env.ADMIN_BOT_TOKEN;
+  if (row1 && row2 && adminToken) {
+    // Resolve file_ids to temp URLs via admin bot, then send via client bot
+    const [f1, f2] = await Promise.all([
+      fetch(`${TELEGRAM_API}/bot${adminToken}/getFile?file_id=${row1.value}`).then(r => r.json()),
+      fetch(`${TELEGRAM_API}/bot${adminToken}/getFile?file_id=${row2.value}`).then(r => r.json()),
+    ]);
+    if (f1.ok && f2.ok) {
+      const url1 = `https://api.telegram.org/file/bot${adminToken}/${f1.result.file_path}`;
+      const url2 = `https://api.telegram.org/file/bot${adminToken}/${f2.result.file_path}`;
+      await fetch(`${TELEGRAM_API}/bot${botToken}/sendMediaGroup`, {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({
+          chat_id: chatId,
+          media  : [{ type: 'photo', media: url1 }, { type: 'photo', media: url2 }],
+        }),
+      });
+    }
+  } else if (row1 && adminToken) {
+    const f1 = await fetch(`${TELEGRAM_API}/bot${adminToken}/getFile?file_id=${row1.value}`).then(r => r.json());
+    if (f1.ok) {
+      const url1 = `https://api.telegram.org/file/bot${adminToken}/${f1.result.file_path}`;
+      await fetch(`${TELEGRAM_API}/bot${botToken}/sendPhoto`, {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({ chat_id: chatId, photo: url1 }),
+      });
+    }
+  }
 
   const greetings = {
-    barber: `✂️ Привет, ${name}!\n\nДобро пожаловать в *${salon.salon_name}*!\n\nС нашим ИИ-ботом ты можешь примерить любую причёску — прямо сейчас, без визита в салон!\n\n🎯 *Как это работает:*\n1. Поделись контактом\n2. Загрузи селфи\n3. Выбери пол → причёску → цвет\n4. Получи ИИ-результат за ~60 сек!\n\n_Доступно ${salon.max_images} бесплатных примерки_\n\n👇 Нажми кнопку ниже:`,
+    barber: `✂️ *${salon.salon_name}* — ИИ-подбор причёски\n\nЗагрузи селфи и за 60 секунд увидишь себя с новой стрижкой — прямо здесь в Telegram.\n\n_${maxImages} бесплатных примерки 🎁_\n\n👇 Поделись контактом чтобы начать:`,
 
-    makeup: `💄 Привет, ${name}!\n\nДобро пожаловать в *${salon.salon_name}*!\n\nПримерь профессиональный макияж с помощью ИИ — быстро и красиво!\n\n🎯 *Как это работает:*\n1. Поделись контактом\n2. Загрузи фото лица\n3. ИИ нанесёт макияж\n4. Получи результат за ~60 сек!\n\n_Доступно ${salon.max_images} бесплатных примерки_\n\n👇 Нажми кнопку ниже:`,
+    makeup: `💄 *${salon.salon_name}* — ИИ-подбор макияжа\n\nЗагрузи фото лица и за 60 секунд увидишь профессиональный образ — прямо здесь в Telegram.\n\n_${maxImages} бесплатных примерки 🎁_\n\n👇 Поделись контактом чтобы начать:`,
 
-    nails: `💅 Привет, ${name}!\n\nДобро пожаловать в *${salon.salon_name}*!\n\nПримерь трендовые дизайны маникюра с помощью ИИ!\n\n🎯 *Как это работает:*\n1. Поделись контактом\n2. Загрузи фото рук\n3. ИИ наложит дизайн\n4. Получи результат за ~60 сек!\n\n_Доступно ${salon.max_images} бесплатных примерки_\n\n👇 Нажми кнопку ниже:`,
+    nails: `💅 *${salon.salon_name}* — ИИ-подбор маникюра\n\nЗагрузи фото рук и за 60 секунд увидишь трендовый дизайн на своих ногтях — прямо здесь в Telegram.\n\n_${maxImages} бесплатных примерки 🎁_\n\n👇 Поделись контактом чтобы начать:`,
   };
 
   await sendMessage(
@@ -1339,15 +1670,15 @@ async function onContact(message, salon, user, env, botToken, chatId, userId) {
   // Next step depends on salon type
   const steps = {
     barber: {
-      text  : `✅ Контакт получен!\n\nДавай подберём причёску! ✂️\n\n*📸* Пришли чёткое *СЕЛФИ* своего лица (фронтально, при хорошем освещении).`,
+      text  : `✅ Отлично, ${name}!\n\n📸 Теперь пришли *СЕЛФИ* — чёткое, фронтально, при хорошем свете.\n\n_Я подберу тебе новую причёску за ~60 секунд._`,
       state : S.WAITING_SELFIE,
     },
     makeup: {
-      text  : `✅ Контакт получен!\n\nПора создать твой образ! 💄\n\n*📸* Пришли чёткое *ФОТО своего лица* (фронтально, при хорошем освещении).`,
+      text  : `✅ Отлично, ${name}!\n\n📸 Теперь пришли *ФОТО лица* — чёткое, фронтально, при хорошем свете.\n\n_Я создам твой образ за ~60 секунд._`,
       state : S.WAITING_FACE,
     },
     nails: {
-      text  : `✅ Контакт получен!\n\nДавай подберём маникюр! 💅\n\n*📸* Пришли *ФОТО своих рук* (ладонями вверх, при хорошем освещении).`,
+      text  : `✅ Отлично, ${name}!\n\n📸 Теперь пришли *ФОТО рук* ладонями вверх, при хорошем свете.\n\n_Я подберу дизайн маникюра за ~60 секунд._`,
       state : S.WAITING_HAND,
     },
   };
@@ -1422,6 +1753,67 @@ async function handleSalonCallback(cq, salon, env) {
     return;
   }
 
+  // ── Salon owner settings edit callbacks ──
+  if (data.startsWith('sedit_') && chatId === String(salon.admin_chat_id)) {
+    if (data === 'sedit_name') {
+      await setState(env, userId, botToken, S.SALON_EDIT_NAME, {});
+      await sendMessage(botToken, chatId, '✏️ Введите *новое название* салона (или /cancel для отмены):');
+      return;
+    }
+    if (data === 'sedit_phone') {
+      await setState(env, userId, botToken, S.SALON_EDIT_PHONE, {});
+      await sendMessage(botToken, chatId, '📱 Введите *новый WhatsApp-номер* (только цифры, или /cancel):\n_Например: 77001112233_');
+      return;
+    }
+    if (data === 'sedit_type') {
+      await sendMessage(botToken, chatId, '🏷️ Выберите *тип салона*:', salonTypeKeyboard('sedit_type'));
+      return;
+    }
+    if (data.startsWith('sedit_type_')) {
+      const newType = data.replace('sedit_type_', '');
+      const typeNames = { barber: 'Барбершоп / Стрижки', makeup: 'Макияж / Студия красоты', nails: 'Ногти / Маникюр' };
+      await env.beauty_ai_db
+        .prepare('UPDATE salons SET salon_type = ? WHERE id = ?')
+        .bind(newType, salon.id).run();
+      await sendMessage(botToken, chatId, `✅ Тип обновлён: *${typeNames[newType] ?? newType}*`, ownerMenuKeyboard());
+      return;
+    }
+    if (data === 'sedit_max') {
+      const cur = salon.max_images ?? 3;
+      await sendMessage(botToken, chatId,
+        `🎯 *Лимит примерок на одного клиента*\n\n` +
+        `Сейчас: *${cur}*\n\n` +
+        `После того как клиент использует все примерки — бот предложит ему записаться в WhatsApp.\n\n` +
+        `Выберите сколько примерок давать каждому клиенту:`,
+        { inline_keyboard: [
+          [
+            { text: '1', callback_data: 'sedit_max_1' },
+            { text: '2', callback_data: 'sedit_max_2' },
+            { text: '3', callback_data: 'sedit_max_3' },
+          ],
+          [
+            { text: '5', callback_data: 'sedit_max_5' },
+            { text: '7', callback_data: 'sedit_max_7' },
+            { text: '10', callback_data: 'sedit_max_10' },
+          ],
+        ]}
+      );
+      return;
+    }
+    if (data.startsWith('sedit_max_')) {
+      const newMax = parseInt(data.replace('sedit_max_', '')) || 3;
+      await env.beauty_ai_db
+        .prepare('UPDATE salons SET max_images = ? WHERE id = ?')
+        .bind(newMax, salon.id).run();
+      await sendMessage(botToken, chatId,
+        `✅ Готово! Каждый клиент теперь получает *${newMax}* примерки.`,
+        ownerMenuKeyboard()
+      );
+      return;
+    }
+    return;
+  }
+
   // ── Salon owner push callbacks ──
   if (data.startsWith('spush_') && chatId === String(salon.admin_chat_id)) {
     await handleSalonPushCallback(data, salon, tempData, env, botToken, chatId, userId);
@@ -1465,6 +1857,7 @@ async function handleSalonCallback(cq, salon, env) {
       style_label     : preset.label,
       style_prompt    : preset.hairPrompt,
       style_is_default: isDefault,
+      style_is_male   : isMale,
     });
     const colorPrompt = isDefault
       ? `✅ Оставляем твою причёску!\n\n🎨 Выбери *новый цвет волос*:`
@@ -1509,8 +1902,9 @@ async function handleSalonCallback(cq, salon, env) {
       return;
     }
 
-    const colorPart = color.colorPrompt ? ` Color the hair to ${color.colorPrompt}.` : '';
-    const fullPrompt = tempData.style_prompt + colorPart + FACE_FINISH;
+    const colorPart = color.colorPrompt ? ` Also color the hair to ${color.colorPrompt}.` : '';
+    const faceLock  = tempData.style_is_male === false ? FACE_LOCK_F : FACE_LOCK_M;
+    const fullPrompt = faceLock + tempData.style_prompt + colorPart;
 
     const styleLabel = tempData.style_label ?? '';
     const colorLabel = color.label !== '✅ Мой цвет' ? ` · ${color.label}` : '';
@@ -1562,7 +1956,7 @@ async function handleOwnerReceipt(message, salon, tempData, env, botToken, chatI
     { text: `✅ Выдать тариф «${tariff.name}»`, callback_data: `asgn_${salonRow.id}_${tariffKey}` },
   ]]}));
 
-  const adminToken = env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN;
+  const adminToken = env.ADMIN_BOT_TOKEN ?? env.STANDARD_BOT_TOKEN;
   const res = await fetch(`${TELEGRAM_API}/bot${adminToken}/sendPhoto`, {
     method: 'POST',
     body  : form,
@@ -1596,7 +1990,7 @@ async function assignTariff(env, salonId, tariffKey, adminChatId) {
     `🎉 *Тариф «${tariff.name}» активирован!*\n\n✅ Доступно: *${tariff.limit} генераций в месяц*\n📅 Сбрасывается 1-го числа каждого месяца\n\nВаши клиенты уже могут пользоваться ботом! 🚀`
   );
 
-  await sendMessage(env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN, adminChatId,
+  await sendMessage(env.ADMIN_BOT_TOKEN ?? env.STANDARD_BOT_TOKEN, adminChatId,
     `✅ Тариф *${tariff.name}* выдан салону *${salon.salon_name}*`
   );
 }
@@ -1727,6 +2121,45 @@ async function handleSalonPushCallback(data, salon, tempData, env, botToken, cha
   }
 }
 
+async function handleSalonEdit(message, salon, state, env, botToken, chatId, userId) {
+  const text = message.text?.trim() ?? '';
+
+  if (text === '/cancel') {
+    await setState(env, userId, botToken, 'start', {});
+    await sendMessage(botToken, chatId, '✅ Изменение отменено.', ownerMenuKeyboard());
+    return;
+  }
+
+  if (state === S.SALON_EDIT_NAME) {
+    if (!text) {
+      await sendMessage(botToken, chatId, '✍️ Введите новое название (или /cancel для отмены):');
+      return;
+    }
+    await env.beauty_ai_db
+      .prepare('UPDATE salons SET name = ?, salon_name = ? WHERE id = ?')
+      .bind(text, text, salon.id).run();
+    await setState(env, userId, botToken, 'start', {});
+    await sendMessage(botToken, chatId, `✅ Название обновлено: *${text}*`, ownerMenuKeyboard());
+    return;
+  }
+
+  if (state === S.SALON_EDIT_PHONE) {
+    const phone = text.replace(/\D/g, '');
+    if (phone.length < 10) {
+      await sendMessage(botToken, chatId,
+        '❌ Введите корректный номер (только цифры, минимум 10 знаков).\n_Например: 77001112233_'
+      );
+      return;
+    }
+    await env.beauty_ai_db
+      .prepare('UPDATE salons SET whatsapp_phone = ? WHERE id = ?')
+      .bind(phone, salon.id).run();
+    await setState(env, userId, botToken, 'start', {});
+    await sendMessage(botToken, chatId, `✅ WhatsApp обновлён: \`${phone}\``, ownerMenuKeyboard());
+    return;
+  }
+}
+
 async function getPushClientCount(env, botToken, salonId) {
   const row = salonId
     ? await env.beauty_ai_db
@@ -1777,7 +2210,7 @@ async function submitFluxKontext(imageUrl, prompt, meta, env) {
     body: JSON.stringify({
       image_url       : imageUrl,
       prompt          : prompt,
-      guidance_scale  : 10,
+      guidance_scale  : 3.5,
       num_images      : 1,
       output_format   : 'jpeg',
       safety_tolerance: '6',
@@ -1907,7 +2340,7 @@ async function incrementAndCheckLimit(env, botToken, chatId, salon, user, userId
   if (newCount >= maxImages) {
     // B2B trial owner finishes test-drive → show tariff/package selector
     if (salon.status === 'trial' && String(chatId) === String(salon.admin_chat_id)) {
-      await showB2bTariffSelector(botToken, chatId);
+      await showB2bTariffSelector(botToken, chatId, env);
     } else {
       await sendOfferMessage(botToken, chatId, salon);
     }
@@ -1929,28 +2362,28 @@ async function sendOfferMessage(botToken, chatId, salon) {
   let bodyText, buttonText, waText;
 
   if (disc) {
-    waText     = `Привет! Я использовал ИИ-бот ${salon.salon_name} и хочу записаться со скидкой ${disc}% 🎉`;
-    buttonText = `🟢 Записаться со скидкой ${disc}% в WhatsApp`;
+    waText     = `Привет! Хочу записаться в ${salon.salon_name} со скидкой ${disc}% — я пробовал ИИ-подбор причёски 🎉`;
+    buttonText = `🟢 Записаться со скидкой ${disc}%`;
     bodyText   = [
-      `🎉 *Ты использовал все ${salon.max_images} бесплатных примерки!*`,
+      `🎉 *Примерки закончились!*`,
       '',
-      `Тебе понравился результат? Самое время воплотить его в реальность!`,
+      `Нравится какой-то результат? Воплоти его в жизнь!`,
       '',
-      `🎁 *Специально для тебя — скидка ${disc}% на первый визит в ${salon.salon_name}!*`,
+      `🎁 *Скидка ${disc}% на первый визит* — только для тебя от *${salon.salon_name}*`,
       '',
-      `Просто нажми кнопку ниже 👇`,
+      `👇 Нажми и запишись за 30 секунд:`,
     ].join('\n');
   } else {
-    waText     = `Привет! Я попробовал ИИ-бот ${salon.salon_name} и хочу записаться. Хочу сделать такую же причёску как на фото!`;
-    buttonText = `💈 Записаться в WhatsApp`;
+    waText     = `Привет! Хочу записаться в ${salon.salon_name} — пробовал ИИ-подбор причёски, хочу сделать такую же!`;
+    buttonText = `💈 Записаться в ${salon.salon_name}`;
     bodyText   = [
-      `🎉 *Ты использовал все ${salon.max_images} бесплатных примерки!*`,
+      `🎉 *Примерки закончились!*`,
       '',
-      `Нравится результат? Самое время воплотить его в реальность!`,
+      `Понравился какой-то вариант? Самое время сделать его по-настоящему!`,
       '',
-      `Запишись в *${salon.salon_name}* — скажи что хочешь такую же причёску как на фото!`,
+      `Запишись в *${salon.salon_name}* — покажи мастеру понравившееся фото.`,
       '',
-      `👇 Нажми кнопку ниже:`,
+      `👇 Записаться за 30 секунд:`,
     ].join('\n');
   }
 
@@ -1983,6 +2416,10 @@ const A = {
   SKIP_TRIAL_WAIT    : 'skip_trial_wait',
   ATTACH_BOT_OWNER   : 'attach_bot_owner',
   ATTACH_BOT_TOKEN   : 'attach_bot_token',
+  CREATE_TRIAL_TYPE  : 'create_trial_type',
+  ADD_ADMIN          : 'add_admin',
+  RESET_USER         : 'reset_user',
+  UPLOAD_WELCOME     : 'upload_welcome',
 };
 
 async function handleAdminUpdate(update, env) {
@@ -1992,13 +2429,9 @@ async function handleAdminUpdate(update, env) {
   if (callbackQuery) {
     const userId = String(callbackQuery.from.id);
     const chatId = String(callbackQuery.message.chat.id);
-    if (userId !== String(env.ADMIN_USER_ID)) {
-      // Non-admin callback → registration flow
-      await fetch(`${TELEGRAM_API}/bot${env.ADMIN_BOT_TOKEN}/answerCallbackQuery`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ callback_query_id: callbackQuery.id }),
-      });
-      await handleRegCallback(callbackQuery, env, userId, chatId);
+    if (!await isAdminId(env, userId)) {
+      // Non-admin callback → standard client / owner flow
+      await handleStandardUpdate(update, env);
     } else {
       await handleAdminCallback(callbackQuery, env);
     }
@@ -2009,9 +2442,9 @@ async function handleAdminUpdate(update, env) {
   const userId = String(message.from.id);
   const chatId = String(message.chat.id);
 
-  // Non-admin → registration flow
-  if (userId !== String(env.ADMIN_USER_ID)) {
-    await handleRegMessage(message, env, userId, chatId);
+  // Non-admin → standard client / owner flow
+  if (!await isAdminId(env, userId)) {
+    await handleStandardUpdate(update, env);
     return;
   }
 
@@ -2027,6 +2460,29 @@ async function handleAdminUpdate(update, env) {
   if (message.text === '/start' || message.text === '🏠 Главное меню') {
     await showAdminMenu(env, chatId);
     await setAdminState(env, userId, A.START, {});
+    return;
+  }
+
+  // ── Welcome photo upload via state ──────────────────────────────────────────
+  if (message.photo && state === A.UPLOAD_WELCOME) {
+    const slot  = tempData.slot ?? '1';
+    const key   = slot === '2' ? 'welcome_photo_2' : 'welcome_photo_1';
+    const fileId = message.photo[message.photo.length - 1].file_id;
+    await env.beauty_ai_db
+      .prepare('INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, datetime(\'now\'))')
+      .bind(key, fileId).run();
+    await setAdminState(env, userId, A.START, {});
+    await adminSend(env, chatId,
+      `✅ Фото ${slot} сохранено! Клиенты увидят его при первом запуске бота.`
+    );
+    await showAdminMenu(env, chatId);
+    return;
+  }
+
+  // /clear_welcome — remove welcome photos
+  if (message.text === '/clear_welcome') {
+    await env.beauty_ai_db.prepare("DELETE FROM settings WHERE key IN ('welcome_photo_1','welcome_photo_2')").run();
+    await adminSend(env, chatId, '✅ Фото-примеры удалены.');
     return;
   }
 
@@ -2054,7 +2510,8 @@ async function handleAdminUpdate(update, env) {
   // Menu buttons always work regardless of current state
   const MENU_BUTTONS = ['📋 Мои боты', '👥 Все клиенты', '📥 Экспорт базы',
     '📢 Рассылка', '➕ Создать триал', '⏭ Скипнуть триал', '📄 Шаблон CSV',
-    '📤 Загрузить CSV', '🔗 Привязать бот', '➕ Добавить бота'];
+    '📤 Загрузить CSV', '🔗 Привязать бот', '➕ Добавить бота',
+    '🖼 Фото приветствия', '🔄 Сбросить клиента', '🏠 Главное меню'];
   if (MENU_BUTTONS.includes(message.text)) {
     await handleAdminMenuAction(message.text, env, chatId, userId);
     return;
@@ -2105,8 +2562,16 @@ async function handleAdminUpdate(update, env) {
     case A.CREATE_TRIAL_NAME: {
       const name = message.text?.trim();
       if (!name) { await adminSend(env, chatId, '✍️ Введи название салона:'); break; }
-      await setAdminState(env, userId, A.CREATE_TRIAL_PHONE, { trial_name: name });
-      await adminSend(env, chatId, `✅ *${name}*\n\n📱 Введи WhatsApp-номер (только цифры):\n_Например: 77001112233_`);
+      await setAdminState(env, userId, A.CREATE_TRIAL_TYPE, { trial_name: name });
+      await adminSend(env, chatId,
+        `✅ *${name}*\n\n🏷️ Выберите тип заведения:`,
+        salonTypeKeyboard('trial_type')
+      );
+      break;
+    }
+
+    case A.CREATE_TRIAL_TYPE: {
+      await adminSend(env, chatId, '👆 Выберите тип заведения:', salonTypeKeyboard('trial_type'));
       break;
     }
 
@@ -2117,12 +2582,14 @@ async function handleAdminUpdate(update, env) {
         break;
       }
       try {
-        const salon = await createTrialSalon(env, tempData.trial_name, phone, 'admin_create');
+        const salonType = tempData.trial_type ?? 'barber';
+        const salon = await createTrialSalon(env, tempData.trial_name, phone, 'admin_create', null, salonType);
         const botUsername = env.STANDARD_BOT_USERNAME ?? 'qrbeatyai_bot';
         const link = `https://t.me/${botUsername}?start=${salon.slug}`;
         await setAdminState(env, userId, A.START, {});
+        const typeEmoji = { barber: '✂️', makeup: '💄', nails: '💅' };
         await adminSend(env, chatId,
-          `✅ *Триал создан!*\n\n✂️ *${salon.name}*\n📱 WhatsApp: \`${phone}\`\n🔗 Ссылка для оунера:\n\`${link}\`\n\n_Когда оунер откроет ссылку, его Telegram ID автоматически привяжется._`
+          `✅ *Триал создан!*\n\n${typeEmoji[salonType] ?? '🤖'} *${salon.name}*\n📱 WhatsApp: \`${phone}\`\n🔗 Ссылка для оунера:\n\`${link}\`\n\n_Когда оунер откроет ссылку, его Telegram ID автоматически привяжется._`
         );
         await showAdminMenu(env, chatId);
       } catch (err) {
@@ -2173,6 +2640,50 @@ async function handleAdminUpdate(update, env) {
       break;
     }
 
+    case A.RESET_USER: {
+      const targetId = (message.text ?? '').trim().replace(/\D/g, '');
+      if (!targetId) {
+        await adminSend(env, chatId, '❌ Неверный формат. Введи числовой Telegram ID:');
+        break;
+      }
+      await env.beauty_ai_db
+        .prepare('DELETE FROM user_states WHERE user_id = ?')
+        .bind(targetId).run();
+      await env.beauty_ai_db
+        .prepare('UPDATE users SET image_count = 0, phone = NULL WHERE user_id = ?')
+        .bind(targetId).run();
+      await setAdminState(env, userId, A.START, {});
+      await adminSend(env, chatId,
+        `✅ Пользователь \`${targetId}\` сброшен.\n\n` +
+        `• Счётчик примерок обнулён\n` +
+        `• Состояние очищено\n\n` +
+        `Теперь он может начать заново через свою ссылку.`
+      );
+      await showAdminMenu(env, chatId);
+      break;
+    }
+
+    case A.ADD_ADMIN: {
+      const newAdminId = (message.text ?? '').trim().replace(/\D/g, '');
+      if (!newAdminId) {
+        await adminSend(env, chatId, '❌ Неверный формат. Введи числовой Telegram ID:');
+        break;
+      }
+      if (getPrimaryAdminIds(env).includes(newAdminId)) {
+        await adminSend(env, chatId, 'ℹ️ Этот ID уже является главным администратором.');
+        await setAdminState(env, userId, A.START, {});
+        await showAdminsList(env, chatId);
+        break;
+      }
+      await env.beauty_ai_db
+        .prepare('INSERT OR IGNORE INTO admins (user_id) VALUES (?)')
+        .bind(newAdminId).run();
+      await setAdminState(env, userId, A.START, {});
+      await adminSend(env, chatId, `✅ Администратор \`${newAdminId}\` добавлен.`);
+      await showAdminsList(env, chatId);
+      break;
+    }
+
     case A.SKIP_TRIAL_WAIT: {
       const targetId = (message.text ?? '').trim().replace(/\D/g, '');
       if (!targetId) {
@@ -2195,7 +2706,7 @@ async function handleAdminUpdate(update, env) {
         .prepare('UPDATE users SET image_count = ? WHERE user_id = ? AND bot_token = ?')
         .bind(maxImages, targetId, botToken).run();
       await setState(env, targetId, botToken, S.DONE, {});
-      await showB2bTariffSelector(botToken, targetId);
+      await showB2bTariffSelector(botToken, targetId, env);
       await setAdminState(env, userId, A.START, {});
       await adminSend(env, chatId,
         `✅ Триал пропущен для \`${targetId}\`.\n\n*${salon.name ?? salon.salon_name}* — им отправлен выбор тарифа.`
@@ -2235,7 +2746,7 @@ async function sendMassTrialTemplate(env, chatId) {
 
 async function handleMassTrial(message, env, chatId) {
   const fileId  = message.document.file_id;
-  const fileUrl = await getTelegramFileUrl(env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN, fileId);
+  const fileUrl = await getTelegramFileUrl(env.ADMIN_BOT_TOKEN ?? env.STANDARD_BOT_TOKEN, fileId);
   const raw     = await (await fetch(fileUrl)).text();
 
   const lines = raw.split(/\r?\n/).filter(l => l.trim());
@@ -2332,7 +2843,7 @@ async function handleAdminCallback(cq, env) {
     body   : JSON.stringify({ callback_query_id: cq.id }),
   });
 
-  if (userId !== String(env.ADMIN_USER_ID)) return;
+  if (!await isAdminId(env, userId)) return;
 
   const stateRow = await env.beauty_ai_db
     .prepare('SELECT * FROM user_states WHERE user_id = ? AND bot_token = ?')
@@ -2351,6 +2862,31 @@ async function handleAdminCallback(cq, env) {
   if (data.startsWith('clients_')) {
     const botToken = data.replace('clients_', '');
     await showClientsBySalon(env, chatId, botToken);
+    return;
+  }
+
+  // "Info about salon X" button
+  if (data.startsWith('info_')) {
+    const botToken = data.replace('info_', '');
+    await showSalonInfo(env, chatId, botToken);
+    return;
+  }
+
+  // Welcome photo upload
+  if (data === 'upload_welcome_1' || data === 'upload_welcome_2') {
+    const slot = data === 'upload_welcome_2' ? '2' : '1';
+    await setAdminState(env, userId, A.UPLOAD_WELCOME, { slot });
+    await adminSend(env, chatId,
+      `📷 Пришли фото ${slot} (пример до/после).\n\n_Просто отправь картинку — без подписи._`
+    );
+    return;
+  }
+
+  if (data === 'delete_welcome') {
+    await env.beauty_ai_db
+      .prepare("DELETE FROM settings WHERE key IN ('welcome_photo_1','welcome_photo_2')")
+      .run();
+    await adminSend(env, chatId, '✅ Фото приветствия удалены.');
     return;
   }
 
@@ -2397,6 +2933,17 @@ async function handleAdminCallback(cq, env) {
     return;
   }
 
+  // Admin trial type selection
+  if (data.startsWith('trial_type_')) {
+    const salonType = data.replace('trial_type_', '');
+    const typeNames = { barber: 'Барбершоп / Стрижки', makeup: 'Макияж / Студия красоты', nails: 'Ногти / Маникюр' };
+    await setAdminState(env, userId, A.CREATE_TRIAL_PHONE, { ...tempData, trial_type: salonType });
+    await adminSend(env, chatId,
+      `✅ Тип: *${typeNames[salonType] ?? salonType}*\n\n📱 Введи WhatsApp-номер (только цифры):\n_Например: 77001112233_`
+    );
+    return;
+  }
+
   // Tariff assignment
   if (data.startsWith('asgn_')) {
     const parts     = data.split('_');
@@ -2420,18 +2967,51 @@ async function handleAdminCallback(cq, env) {
   if (data.startsWith('bcast_')) {
     const target = data.replace('bcast_', '');
     let targetLabel;
+    let audienceNote;
     if (target === 'ALL') {
-      targetLabel = 'все боты';
-    } else {
+      targetLabel = 'все клиенты';
+      audienceNote = 'всем клиентам, поделившимся контактом';
+    } else if (target === 'owners') {
+      targetLabel = 'все владельцы';
+      audienceNote = 'всем владельцам салонов';
+    } else if (target.startsWith('sid_')) {
+      const salonId = target.replace('sid_', '');
       const sln = await env.beauty_ai_db
-        .prepare('SELECT salon_name FROM salons WHERE bot_token = ?')
-        .bind(target).first();
-      targetLabel = sln?.salon_name ?? 'бот';
+        .prepare('SELECT salon_name FROM salons WHERE id = ?')
+        .bind(salonId).first();
+      targetLabel = sln?.salon_name ?? 'салон';
+      audienceNote = `клиентам салона *${targetLabel}*, поделившимся контактом`;
+    } else {
+      targetLabel = 'бот';
+      audienceNote = 'клиентам';
     }
     await setAdminState(env, userId, A.BROADCAST_TEXT, { broadcast_target: target });
     await adminSend(env, chatId,
-      `✍️ *Рассылка — ${targetLabel}*\n\nНапиши текст сообщения.\n\n_Он будет отправлен всем клиентам, поделившимся контактом._`
+      `✍️ *Рассылка — ${targetLabel}*\n\nНапиши текст сообщения.\n\n_Он будет отправлен ${audienceNote}._`
     );
+    return;
+  }
+
+  // ── Admin management ────────────────────────────────────────────────────────
+  if (data === 'admin_add') {
+    await setAdminState(env, userId, A.ADD_ADMIN, {});
+    await adminSend(env, chatId,
+      '👮 *Добавить администратора*\n\n' +
+      'Введи *Telegram ID* нового администратора.\n\n' +
+      '_Как узнать ID: попроси человека написать @userinfobot_'
+    );
+    return;
+  }
+
+  if (data.startsWith('admin_rm_')) {
+    const targetId = data.replace('admin_rm_', '');
+    if (getPrimaryAdminIds(env).includes(targetId)) {
+      await adminSend(env, chatId, '❌ Нельзя удалить главного администратора.');
+      return;
+    }
+    await env.beauty_ai_db.prepare('DELETE FROM admins WHERE user_id = ?').bind(targetId).run();
+    await adminSend(env, chatId, `✅ Администратор \`${targetId}\` удалён.`);
+    await showAdminsList(env, chatId);
     return;
   }
 }
@@ -2487,6 +3067,63 @@ async function attachPremiumBot(env, adminChatId, ownerId, salonId, salonName, n
   );
 }
 
+async function showAdminsList(env, chatId) {
+  const primaryIds = getPrimaryAdminIds(env);
+  const { results: dbAdmins } = await env.beauty_ai_db
+    .prepare('SELECT user_id, added_at FROM admins ORDER BY added_at')
+    .all();
+
+  let text = '👮 *Администраторы панели*\n\n';
+  text += primaryIds.map(id => `• \`${id}\` — главный _(из настроек)_`).join('\n');
+  if (dbAdmins.length) {
+    text += '\n' + dbAdmins.map(a => `• \`${a.user_id}\` — помощник`).join('\n');
+  }
+
+  const removeButtons = dbAdmins.map(a => [{
+    text: `🗑 Удалить ${a.user_id}`,
+    callback_data: `admin_rm_${a.user_id}`,
+  }]);
+
+  await adminSend(env, chatId, text, {
+    inline_keyboard: [
+      [{ text: '➕ Добавить администратора', callback_data: 'admin_add' }],
+      ...removeButtons,
+    ],
+  });
+}
+
+async function showAdminStats(env, chatId) {
+  const [totalSalons, activeSalons, trialSalons, totalClients, gensRow] = await Promise.all([
+    env.beauty_ai_db.prepare("SELECT COUNT(*) AS cnt FROM salons").first(),
+    env.beauty_ai_db.prepare("SELECT COUNT(*) AS cnt FROM salons WHERE status IN ('standard_active','premium_active')").first(),
+    env.beauty_ai_db.prepare("SELECT COUNT(*) AS cnt FROM salons WHERE status = 'trial'").first(),
+    env.beauty_ai_db.prepare("SELECT COUNT(DISTINCT user_id) AS cnt FROM users").first(),
+    env.beauty_ai_db.prepare("SELECT SUM(monthly_generations_count) AS total FROM salons").first(),
+  ]);
+
+  const totalGens = gensRow?.total ?? 0;
+  const costUsd   = (totalGens * 0.04).toFixed(2);
+
+  const { results: top } = await env.beauty_ai_db
+    .prepare(`SELECT salon_name, monthly_generations_count FROM salons
+              WHERE monthly_generations_count > 0
+              ORDER BY monthly_generations_count DESC LIMIT 5`)
+    .all();
+
+  const topLines = top.map(s => `• ${s.salon_name}: *${s.monthly_generations_count}* ген.`).join('\n');
+
+  await adminSend(env, chatId,
+    `📊 *Общая статистика Beauty AI*\n\n` +
+    `🏢 Всего салонов: *${totalSalons?.cnt ?? 0}*\n` +
+    `   ✅ Активных: *${activeSalons?.cnt ?? 0}*\n` +
+    `   🔬 Триалов: *${trialSalons?.cnt ?? 0}*\n\n` +
+    `👥 Всего клиентов: *${totalClients?.cnt ?? 0}*\n\n` +
+    `🎨 Генераций этот месяц: *${totalGens}*\n` +
+    `💰 Расход fal.ai: *~$${costUsd}*\n` +
+    (topLines ? `\n📈 *Топ-5 по генерациям:*\n${topLines}` : '')
+  );
+}
+
 async function showAdminMenu(env, chatId) {
   await adminSend(env, chatId,
     '🤖 *Панель управления Beauty AI*\n\nВыбери действие:',
@@ -2497,6 +3134,8 @@ async function showAdminMenu(env, chatId) {
         ['➕ Создать триал', '⏭ Скипнуть триал'],
         ['📄 Шаблон CSV', '📤 Загрузить CSV'],
         ['🔗 Привязать бот', '➕ Добавить бота'],
+        ['📊 Общая статистика', '👮 Администраторы'],
+        ['🖼 Фото приветствия', '🔄 Сбросить клиента'],
         ['🏠 Главное меню'],
       ],
       resize_keyboard: true,
@@ -2528,6 +3167,26 @@ async function handleAdminMenuAction(text, env, chatId, userId) {
     await adminSend(env, chatId,
       '📎 Пришли CSV-файл со списком салонов.\n\n_Формат: Название;Телефон;Источник_\n_Нужен шаблон? Нажми *📄 Шаблон CSV*_'
     );
+  } else if (text === '📊 Общая статистика') {
+    await showAdminStats(env, chatId);
+  } else if (text === '👮 Администраторы') {
+    await showAdminsList(env, chatId);
+  } else if (text === '🖼 Фото приветствия') {
+    await adminSend(env, chatId,
+      '🖼 *Фото приветствия*\n\nЭти фото показываются клиентам при первом запуске бота (примеры до/после).\n\nКакое фото загрузить?',
+      { inline_keyboard: [
+        [{ text: '📷 Фото 1', callback_data: 'upload_welcome_1' },
+         { text: '📷 Фото 2', callback_data: 'upload_welcome_2' }],
+        [{ text: '🗑 Удалить оба', callback_data: 'delete_welcome' }],
+      ]}
+    );
+  } else if (text === '🔄 Сбросить клиента') {
+    await setAdminState(env, userId, A.RESET_USER, {});
+    await adminSend(env, chatId,
+      '🔄 *Сброс клиента*\n\nВведи *Telegram ID* пользователя.\n\n' +
+      '_Это обнулит его счётчик примерок и сбросит состояние — он сможет начать заново._\n\n' +
+      '_Как узнать ID: @userinfobot_'
+    );
   } else if (text === '🔗 Привязать бот') {
     await setAdminState(env, userId, A.ATTACH_BOT_OWNER, {});
     await adminSend(env, chatId,
@@ -2551,6 +3210,8 @@ async function showSalons(env, chatId) {
   const { results } = await env.beauty_ai_db
     .prepare(`
       SELECT s.bot_token, s.salon_name, s.salon_type, s.max_images,
+             s.status, s.plan_name, s.paid_until,
+             s.monthly_generations_count, s.max_allowed_generations,
              COUNT(u.id) AS client_count
       FROM salons s
       LEFT JOIN users u ON u.bot_token = s.bot_token AND u.phone IS NOT NULL
@@ -2564,20 +3225,69 @@ async function showSalons(env, chatId) {
     return;
   }
 
-  const emoji = { barber: '✂️', makeup: '💄', nails: '💅' };
+  const emoji   = { barber: '✂️', makeup: '💄', nails: '💅' };
+  const statusLabel = { trial: '🧪 Триал', standard_active: '✅ Активна', premium_active: '✅ Активна', expired: '❌ Истекла' };
+
   let text = `📋 *Твои боты (${results.length}):*\n\n`;
   const buttons = [];
 
   for (const s of results) {
+    const used  = s.monthly_generations_count ?? 0;
+    const limit = s.max_allowed_generations   ?? 0;
+    const status = statusLabel[s.status] ?? s.status;
+    const planLine = s.plan_name
+      ? `${status} · ${s.plan_name} · ${used}/${limit} ген.`
+      : status;
+    const paidLine = s.paid_until ? ` · до ${s.paid_until}` : '';
+
     text += `${emoji[s.salon_type] ?? '🤖'} *${s.salon_name}*\n`;
-    text += `   Тип: \`${s.salon_type}\` | Клиентов: *${s.client_count}* | Лимит: ${s.max_images} фото\n\n`;
+    text += `   ${planLine}${paidLine} · 👥 ${s.client_count}\n\n`;
+
     buttons.push([
-      { text: `👥 Клиенты — ${s.salon_name}`, callback_data: `clients_${s.bot_token}` },
-      { text: `🗑 Удалить`,                   callback_data: `del_ask_${s.bot_token}` },
+      { text: `👥 Клиенты`,  callback_data: `clients_${s.bot_token}` },
+      { text: `ℹ️ Инфо`,    callback_data: `info_${s.bot_token}`    },
+      { text: `🗑 Удалить`, callback_data: `del_ask_${s.bot_token}` },
     ]);
   }
 
   await adminSend(env, chatId, text, { inline_keyboard: buttons });
+}
+
+async function showSalonInfo(env, chatId, botToken) {
+  const s = await env.beauty_ai_db
+    .prepare('SELECT * FROM salons WHERE bot_token = ?')
+    .bind(botToken).first();
+  if (!s) { await adminSend(env, chatId, '❌ Салон не найден.'); return; }
+
+  const clientCount = await env.beauty_ai_db
+    .prepare('SELECT COUNT(*) as cnt FROM users WHERE bot_token = ? AND phone IS NOT NULL')
+    .bind(botToken).first();
+
+  const emoji      = { barber: '✂️', makeup: '💄', nails: '💅' };
+  const statusLabel = { trial: '🧪 Триал', standard_active: '✅ Активна', premium_active: '✅ Активна', expired: '❌ Истекла' };
+
+  const used  = s.monthly_generations_count ?? 0;
+  const limit = s.max_allowed_generations   ?? 0;
+  const falCostUsed  = (used  * 0.04).toFixed(2);
+  const falCostLimit = (limit * 0.04).toFixed(2);
+
+  let text = `${emoji[s.salon_type] ?? '🤖'} *${s.salon_name}* — подробно\n\n`;
+  text += `📋 Статус: ${statusLabel[s.status] ?? s.status}\n`;
+  if (s.plan_name) text += `📦 Тариф: *${s.plan_name}*\n`;
+  if (s.paid_until) text += `📅 Оплачено до: *${s.paid_until}*\n`;
+  if (limit > 0) {
+    text += `📊 Генераций: *${used} / ${limit}* в этом месяце\n`;
+    text += `💰 Расходы fal.ai: ~$${falCostUsed} из $${falCostLimit}\n`;
+  }
+  text += `🎯 Примерок на клиента: *${s.max_images ?? 3}*\n`;
+  text += `👥 Клиентов: *${clientCount?.cnt ?? 0}*\n`;
+  text += `📱 WhatsApp: \`${s.whatsapp_phone ?? '—'}\`\n`;
+  if (s.slug) {
+    const stdUsername = s.standard_bot_username ?? 'qrbeatyai_bot';
+    text += `🔗 Ссылка клиентов: \`https://t.me/qrbeatyai_bot?start=${s.slug}\`\n`;
+  }
+
+  await adminSend(env, chatId, text);
 }
 
 // ── List clients ──────────────────────────────────────────────────────────────
@@ -2732,17 +3442,13 @@ async function handleRegMessage(message, env, userId, chatId) {
   const state    = stateRow?.state ?? 'reg_start';
   const tempData = JSON.parse(stateRow?.temp_data ?? '{}');
 
-  if (message.text === '/start' || state === 'reg_start') {
-    await adminSend(env, chatId,
-      `🤖 *Beauty AI — Подключение салона*\n\n` +
-      `Добро пожаловать! Этот бот подключает ИИ-помощника для вашего барбершопа или салона.\n\n` +
-      `*Что понадобится:*\n• Название салона на английском\n• WhatsApp для записи клиентов\n• Логотип салона\n\n` +
-      `Нажмите кнопку чтобы начать 👇`,
-      { inline_keyboard: [[{ text: '🚀 Подать заявку', callback_data: 'reg_start' }]] }
-    );
-    await setRegState(env, userId, 'reg_start', {});
-    return;
-  }
+  const supportLink = env?.SUPPORT_TG_LINK ?? 'https://t.me/BeautyAI_Support';
+  await adminSend(env, chatId,
+    `🤖 *Beauty AI*\n\nЭтот бот для авторизованных пользователей.\n\n` +
+    `Если вы владелец салона — зайдите по вашей пригласительной ссылке.\n\n` +
+    `По вопросам: ${supportLink}`
+  );
+  return;
 
   // ── Photo input: logo step ──
   if (message.photo && state === 'reg_photo') {
@@ -3140,7 +3846,7 @@ async function exportClients(env, chatId) {
 
 async function startBroadcast(env, chatId, userId) {
   const { results: salons } = await env.beauty_ai_db
-    .prepare('SELECT bot_token, salon_name, salon_type FROM salons ORDER BY salon_name')
+    .prepare('SELECT id, bot_token, salon_name, salon_type FROM salons ORDER BY salon_name')
     .all();
 
   if (!salons.length) {
@@ -3150,8 +3856,9 @@ async function startBroadcast(env, chatId, userId) {
 
   const emoji = { barber: '✂️', makeup: '💄', nails: '💅' };
   const buttons = [
-    [{ text: '📢 Все боты сразу', callback_data: 'bcast_ALL' }],
-    ...salons.map(s => [{ text: `${emoji[s.salon_type] ?? '🤖'} ${s.salon_name}`, callback_data: `bcast_${s.bot_token}` }]),
+    [{ text: '📢 Все клиенты (все боты)', callback_data: 'bcast_ALL' }],
+    [{ text: '👑 Всем владельцам салонов',  callback_data: 'bcast_owners' }],
+    ...salons.map(s => [{ text: `${emoji[s.salon_type] ?? '🤖'} ${s.salon_name}`, callback_data: `bcast_sid_${s.id}` }]),
   ];
 
   await adminSend(env, chatId,
@@ -3169,16 +3876,37 @@ async function sendBroadcast(env, chatId, userId, text, target) {
     return;
   }
 
-  let stmt;
-  if (target === 'ALL') {
-    stmt = env.beauty_ai_db.prepare('SELECT user_id, bot_token FROM users WHERE phone IS NOT NULL');
-  } else {
-    stmt = env.beauty_ai_db.prepare('SELECT user_id, bot_token FROM users WHERE phone IS NOT NULL AND bot_token = ?').bind(target);
+  // recipients: array of { chat_id, token }
+  let recipients = [];
+
+  if (target === 'owners') {
+    // Send to all salon owners via their own bot
+    const { results: salonRows } = await env.beauty_ai_db
+      .prepare(`SELECT admin_chat_id, bot_token FROM salons
+                WHERE admin_chat_id IS NOT NULL AND admin_chat_id != '' AND admin_chat_id != '0'`)
+      .all();
+    recipients = salonRows.map(s => ({
+      chat_id: s.admin_chat_id,
+      token: isValidTgToken(s.bot_token) ? s.bot_token : env.STANDARD_BOT_TOKEN,
+    }));
+  } else if (target.startsWith('sid_')) {
+    const salonId = target.replace('sid_', '');
+    const { results: userRows } = await env.beauty_ai_db
+      .prepare('SELECT user_id, bot_token FROM users WHERE phone IS NOT NULL AND salon_id = ?')
+      .bind(salonId).all();
+    recipients = userRows.map(u => ({ chat_id: u.user_id, token: u.bot_token }));
+  } else if (target === 'ALL') {
+    const { results: userRows } = await env.beauty_ai_db
+      .prepare('SELECT user_id, bot_token FROM users WHERE phone IS NOT NULL')
+      .all();
+    recipients = userRows.map(u => ({ chat_id: u.user_id, token: u.bot_token }));
   }
-  const { results: recipients } = await stmt.all();
 
   if (!recipients.length) {
-    await adminSend(env, chatId, '📭 Нет клиентов для рассылки (никто не поделился контактом).');
+    const emptyMsg = target === 'owners'
+      ? '📭 Нет владельцев (ни один салон не зарегистрирован с admin_chat_id).'
+      : '📭 Нет клиентов для рассылки (никто не поделился контактом).';
+    await adminSend(env, chatId, emptyMsg);
     await setAdminState(env, userId, A.START, {});
     await showAdminMenu(env, chatId);
     return;
@@ -3187,12 +3915,11 @@ async function sendBroadcast(env, chatId, userId, text, target) {
   await adminSend(env, chatId, `⏳ Отправляю ${recipients.length} сообщений…`);
 
   let sent = 0, failed = 0;
-  // Send in batches of 25 to respect Telegram rate limits
   const BATCH = 25;
   for (let i = 0; i < recipients.length; i += BATCH) {
     const batch = recipients.slice(i, i + BATCH);
     const results = await Promise.allSettled(
-      batch.map(u => sendMessage(u.bot_token, u.user_id, text))
+      batch.map(r => sendMessage(r.token, r.chat_id, text))
     );
     sent   += results.filter(r => r.status === 'fulfilled').length;
     failed += results.filter(r => r.status === 'rejected').length;
@@ -3213,7 +3940,7 @@ async function sendAdminDocument(env, chatId, filename, content, caption = '') {
   form.append('document', new Blob([content], { type: 'text/csv; charset=utf-8' }), filename);
   if (caption) form.append('caption', caption);
 
-  const token = env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN;
+  const token = env.ADMIN_BOT_TOKEN ?? env.STANDARD_BOT_TOKEN;
   const res = await fetch(`${TELEGRAM_API}/bot${token}/sendDocument`, {
     method: 'POST',
     body: form,
@@ -3225,7 +3952,7 @@ async function adminSend(env, chatId, text, replyMarkup = null) {
   const body = { chat_id: chatId, text, parse_mode: 'Markdown' };
   if (replyMarkup) body.reply_markup = replyMarkup;
 
-  const token = env.STANDARD_BOT_TOKEN ?? env.ADMIN_BOT_TOKEN;
+  const token = env.ADMIN_BOT_TOKEN ?? env.STANDARD_BOT_TOKEN;
   const res = await fetch(`${TELEGRAM_API}/bot${token}/sendMessage`, {
     method : 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -3487,24 +4214,45 @@ function genderKeyboard() {
 }
 
 function maleStylesKeyboard() {
+  const m = (key) => ({ text: MALE_STYLES[key].label, callback_data: `mstyle_${key}` });
   return { inline_keyboard: [
-    [{ text: MALE_STYLES.default.label,    callback_data: 'mstyle_default'    }],
-    [{ text: MALE_STYLES.fade.label,       callback_data: 'mstyle_fade'       }, { text: MALE_STYLES.undercut.label,   callback_data: 'mstyle_undercut'   }],
-    [{ text: MALE_STYLES.frenchcrop.label, callback_data: 'mstyle_frenchcrop' }, { text: MALE_STYLES.edgar.label,      callback_data: 'mstyle_edgar'      }],
-    [{ text: MALE_STYLES.slickback.label,  callback_data: 'mstyle_slickback'  }, { text: MALE_STYLES.quiff.label,      callback_data: 'mstyle_quiff'      }],
-    [{ text: MALE_STYLES.pompadour.label,  callback_data: 'mstyle_pompadour'  }, { text: MALE_STYLES.taper.label,      callback_data: 'mstyle_taper'      }],
-    [{ text: MALE_STYLES.curly.label,      callback_data: 'mstyle_curly'      }, { text: MALE_STYLES.buzz.label,       callback_data: 'mstyle_buzz'       }],
+    [m('default')],
+    // Короткие
+    [m('buzz'),        m('crewcut')],
+    [m('caesar'),      m('fade')],
+    [m('taper'),       m('frenchcrop')],
+    [m('edgar'),       m('fauxhawk')],
+    // Укладки
+    [m('slickback'),   m('undercut')],
+    [m('quiff'),       m('pompadour')],
+    // Средняя длина
+    [m('twoblock'),    m('curtainmen')],
+    [m('mullet'),      m('longback')],
+    // Кудри
+    [m('curlyshort'),  m('curlymed')],
+    [m('curlylong')],
   ]};
 }
 
 function femaleStylesKeyboard() {
+  const f = (key) => ({ text: FEMALE_STYLES[key].label, callback_data: `fstyle_${key}` });
   return { inline_keyboard: [
-    [{ text: FEMALE_STYLES.default.label,      callback_data: 'fstyle_default'      }],
-    [{ text: FEMALE_STYLES.wolfcut.label,       callback_data: 'fstyle_wolfcut'      }, { text: FEMALE_STYLES.lob.label,          callback_data: 'fstyle_lob'          }],
-    [{ text: FEMALE_STYLES.bob.label,           callback_data: 'fstyle_bob'          }, { text: FEMALE_STYLES.curtainbangs.label,  callback_data: 'fstyle_curtainbangs'  }],
-    [{ text: FEMALE_STYLES.longstraight.label,  callback_data: 'fstyle_longstraight' }, { text: FEMALE_STYLES.layers.label,        callback_data: 'fstyle_layers'        }],
-    [{ text: FEMALE_STYLES.butterfly.label,     callback_data: 'fstyle_butterfly'    }, { text: FEMALE_STYLES.curly.label,         callback_data: 'fstyle_curly'         }],
-    [{ text: FEMALE_STYLES.pixie.label,         callback_data: 'fstyle_pixie'        }, { text: FEMALE_STYLES.ponytail.label,      callback_data: 'fstyle_ponytail'      }],
+    [f('default')],
+    // Короткие
+    [f('pixie'),        f('frenchbob')],
+    // Каре
+    [f('bob'),          f('angledBob')],
+    [f('lob'),          f('curtainbangs')],
+    // Средняя длина
+    [f('shag'),         f('wolfcut')],
+    [f('butterfly'),    f('beachwaves')],
+    // Длинные
+    [f('longstraight'), f('layers')],
+    [f('bluntlong'),    f('curlylong')],
+    [f('curlymed')],
+    // Укладки
+    [f('ponytail'),     f('bun')],
+    [f('braid')],
   ]};
 }
 

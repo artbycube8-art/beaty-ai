@@ -23,7 +23,8 @@
   "vars": {
     "WORKER_URL": "https://beauty-ai-saas.artbycube8.workers.dev",
     "STANDARD_BOT_USERNAME": "qrbeatyai_bot",
-    "SUPPORT_TG_LINK": "https://t.me/BeautyAI_Support"
+    "SUPPORT_TG_LINK": "https://t.me/BeautyAI_Support",
+    "FAL_ALERT_THRESHOLD_USD": "20"
   },
 
   // ─── D1 Database ──────────────────────────────────────────────────────────
@@ -36,7 +37,9 @@
   ]
 
   // ─── Secrets (wrangler secret put <NAME>) ─────────────────────────────────
-  //   FAL_KEY          — fal.ai API key
-  //   ADMIN_BOT_TOKEN  — admin panel bot token
-  //   ADMIN_USER_ID    — your Telegram user ID
+  //   FAL_KEY            — fal.ai API key
+  //   ADMIN_BOT_TOKEN    — admin panel bot token
+  //   ADMIN_USER_ID      — your Telegram user ID (comma-separated for multiple)
+  //   WELCOME_PHOTO_1    — URL of first example photo shown on /start (optional)
+  //   WELCOME_PHOTO_2    — URL of second example photo shown on /start (optional)
 }

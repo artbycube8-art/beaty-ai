@@ -386,9 +386,9 @@ const OFERTA_HTML = `<!DOCTYPE html>
 
 <h2>14. Байланыс және деректемелер</h2>
 <div class="requisites">
-  <p><strong>Оператор:</strong> ЖК [Тегі Аты Жөні]</p>
-  <p><strong>БСН/ЖСН:</strong> __________________</p>
-  <p><strong>Тіркелген мекен-жайы:</strong> Қазақстан Республикасы, __________________</p>
+  <p><strong>Оператор:</strong> ЖК Елеуов</p>
+  <p><strong>ЖСН:</strong> 031222551303</p>
+  <p><strong>Тіркелген мекен-жайы:</strong> Қазақстан Республикасы, Астана қ., Тұран д-лы 57/7</p>
   <p><strong>E-mail:</strong> tamerlan.yeleuov@gmail.com</p>
   <p><strong>Telegram қолдауы:</strong> https://t.me/BeautyAI_Support</p>
   <p><strong>Жаңартылған күні:</strong> 2026 жылғы 26 мамыр</p>
@@ -507,9 +507,9 @@ const OFERTA_HTML = `<!DOCTYPE html>
 
 <h2>14. Контакты и реквизиты</h2>
 <div class="requisites">
-  <p><strong>Оператор:</strong> ИП [Фамилия Имя Отчество]</p>
-  <p><strong>БИН/ИИН:</strong> __________________</p>
-  <p><strong>Юридический адрес:</strong> Республика Казахстан, __________________</p>
+  <p><strong>Оператор:</strong> ИП Елеуов</p>
+  <p><strong>ИИН:</strong> 031222551303</p>
+  <p><strong>Юридический адрес:</strong> Республика Казахстан, г. Астана, Пр. Туран 57/7</p>
   <p><strong>E-mail:</strong> tamerlan.yeleuov@gmail.com</p>
   <p><strong>Telegram поддержка:</strong> https://t.me/BeautyAI_Support</p>
   <p><strong>Дата обновления:</strong> 26 мая 2026 г.</p>

@@ -2322,24 +2322,15 @@ async function handleSalonCallback(cq, salon, env) {
     const styleLabel = tempData.style_label ?? '';
     const colorLabel = color.label !== '✅ Мой цвет' ? ` · ${color.label}` : '';
     await sendMessage(botToken, chatId,
-      `⏳ Генерирую *${styleLabel}${colorLabel}*… Пришлю вам результат через ~30 секунд. ✨`
+      `⏳ Генерирую *${styleLabel}${colorLabel}*… Пришлю вам результат через ~60 секунд. ✨`
     );
 
     try {
-      const b64 = await submitDeepInfraKontext(tempData.selfie_url, fullPrompt, env);
-      const salonTitle = salon.name || salon.salon_name || 'салон';
-      const discCaption = salon.discount
-        ? `🎉 Вот ваша новая причёска!\n\n💡 Нравится? Запишись в *${salonTitle}* со скидкой ${salon.discount}%!`
-        : `🎉 Вот ваша новая причёска!\n\n💡 Нравится? Запишись в *${salonTitle}*!`;
-      await sendPhotoB64(botToken, chatId, b64, discCaption);
-      await incrementAndCheckLimit(
-        env, botToken, chatId, salon, user, userId, salon.max_images ?? 3,
-        `✂️ Хотите примерить другую причёску? Пришлите новое *СЕЛФИ*!`,
-        S.WAITING_SELFIE
-      );
+      await submitKlingO1(tempData.selfie_url, fullPrompt, { userId, botToken, chatId, salonId: salon.id }, env);
+      await setState(env, userId, botToken, S.PROCESSING, {});
     } catch (err) {
-      console.error('DeepInfra Kontext error:', err);
-      await sendMessage(botToken, chatId, '❌ Не удалось обработать фото. Попробуй ещё раз.');
+      console.error('Kling O1 error:', err);
+      await sendMessage(botToken, chatId, '❌ Не удалось отправить задачу. Попробуй ещё раз.');
       await setState(env, userId, botToken, S.WAITING_SELFIE, {});
     }
   }
@@ -2616,34 +2607,38 @@ async function sendSalonPush(env, botToken, text, buttons, salonId) {
   return sent;
 }
 
-// ─── DeepInfra FLUX.1-Kontext-dev — synchronous image editing ────────────────
-// Docs: https://deepinfra.com/black-forest-labs/FLUX.1-Kontext-dev
-// Returns base64 JPEG; no pending_jobs needed (synchronous).
-async function submitDeepInfraKontext(imageUrl, prompt, env) {
-  // Download the source image (Telegram CDN URL)
-  const imgRes = await fetch(imageUrl);
-  if (!imgRes.ok) throw new Error(`image download ${imgRes.status}`);
-  const imgBlob = await imgRes.blob();
+// ─── Kling O1 Image — fal.ai async queue ─────────────────────────────────────
+// Docs: https://fal.ai/models/fal-ai/kling-image/o1
+// Uses @Image1 reference syntax; async webhook same as other fal jobs.
+async function submitKlingO1(imageUrl, prompt, meta, env) {
+  const workerUrl = env.WORKER_URL.replace(/\/$/, '');
 
-  const form = new FormData();
-  form.append('model',  'black-forest-labs/FLUX.1-Kontext-dev');
-  form.append('prompt', prompt);
-  form.append('n',      '1');
-  form.append('size',   '1024x1024');
-  form.append('response_format', 'b64_json');
-  form.append('image',  imgBlob, 'photo.jpg');
-
-  const res = await fetch('https://api.deepinfra.com/v1/openai/images/edits', {
+  const res = await fetch(`${FAL_QUEUE}/fal-ai/kling-image/o1`, {
     method  : 'POST',
-    headers : { 'Authorization': `Bearer ${env.DEEPINFRA_KEY}` },
-    body    : form,
+    headers : {
+      'Authorization'     : `Key ${env.FAL_KEY}`,
+      'Content-Type'      : 'application/json',
+      'x-fal-webhook-url' : `${workerUrl}/fal-callback`,
+      'X-Fal-Object-Lifecycle-Preference': 'min',
+    },
+    body: JSON.stringify({
+      image_urls : [imageUrl],
+      prompt     : `@Image1 ${prompt}`,
+      num_images : 1,
+      resolution : '1K',
+      output_format: 'jpeg',
+    }),
   });
 
-  if (!res.ok) throw new Error(`deepinfra ${res.status}: ${await res.text()}`);
-  const json = await res.json();
-  const b64  = json?.data?.[0]?.b64_json;
-  if (!b64) throw new Error('no b64_json in DeepInfra response');
-  return b64; // base64 JPEG string
+  if (!res.ok) throw new Error(`kling-o1 ${res.status}: ${await res.text()}`);
+  const q = await res.json();
+  console.log('[kling-o1] queued:', JSON.stringify(q));
+
+  await env.beauty_ai_db
+    .prepare(`INSERT INTO pending_jobs (request_id, user_id, bot_token, chat_id, status_url, response_url, salon_id)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .bind(q.request_id, meta.userId, meta.botToken, meta.chatId, q.status_url, q.response_url, meta.salonId ?? null)
+    .run();
 }
 
 // ─── Makeup flow (1 photo) ────────────────────────────────────────────────────
@@ -3420,10 +3415,10 @@ async function handleAdminCallback(cq, env) {
       const fullPrompt = faceLock + tempData.style_prompt + colorPart;
       const styleLabel = tempData.style_label ?? '';
       const colorLabel = color.label !== '✅ Мой цвет' ? ` · ${color.label}` : '';
-      await adminSend(env, chatId, `⏳ Генерирую *${styleLabel}${colorLabel}*… ~30 сек ✨`);
+      await adminSend(env, chatId, `⏳ Генерирую *${styleLabel}${colorLabel}*… ~60 сек ✨`);
       try {
-        const b64 = await submitDeepInfraKontext(tempData.selfie_url, fullPrompt, env);
-        await sendPhotoB64(env.ADMIN_BOT_TOKEN, chatId, b64, '🎨 *Готово!*');
+        await submitKlingO1(tempData.selfie_url, fullPrompt,
+          { userId, botToken: env.ADMIN_BOT_TOKEN, chatId, salonId: null }, env);
         await setAdminState(env, userId, A.START, {});
       } catch (err) {
         console.error('[admin gen] error:', err);

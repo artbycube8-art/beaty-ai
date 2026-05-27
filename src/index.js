@@ -3664,9 +3664,14 @@ async function handleAdminMenuAction(text, env, chatId, userId) {
 // ── List salons ───────────────────────────────────────────────────────────────
 
 async function showSalons(env, chatId) {
+  const totalRow = await env.beauty_ai_db
+    .prepare('SELECT COUNT(*) as cnt FROM salons').first();
+  const activeRow = await env.beauty_ai_db
+    .prepare("SELECT COUNT(*) as cnt FROM salons WHERE status IN ('standard_active','premium_active')").first();
+
   const { results } = await env.beauty_ai_db
     .prepare(`
-      SELECT s.bot_token, s.salon_name, s.salon_type, s.max_images,
+      SELECT s.bot_token, s.salon_name, s.salon_type,
              s.status, s.plan_name, s.paid_until,
              s.monthly_generations_count, s.max_allowed_generations,
              COUNT(u.id) AS client_count
@@ -3674,35 +3679,35 @@ async function showSalons(env, chatId) {
       LEFT JOIN users u ON u.bot_token = s.bot_token AND u.phone IS NOT NULL
       GROUP BY s.bot_token
       ORDER BY s.created_at DESC
+      LIMIT 20
     `)
     .all();
 
   if (!results.length) {
-    await adminSend(env, chatId, 'У тебя пока нет ботов. Нажми *➕ Добавить бота*.');
+    await adminSend(env, chatId, 'Пока нет ботов. Нажми *➕ Добавить бота*.');
     return;
   }
 
-  const emoji   = { barber: '✂️', makeup: '💄', nails: '💅' };
+  const emoji       = { barber: '✂️', makeup: '💄', nails: '💅' };
   const statusLabel = { trial: '🧪 Триал', standard_active: '✅ Активна', premium_active: '✅ Активна', expired: '❌ Истекла' };
 
-  let text = `📋 *Твои боты (${results.length}):*\n\n`;
+  let text = `📋 *Боты (всего: ${totalRow.cnt}, активных: ${activeRow.cnt})*\n`;
+  text += `_Показаны последние 20_\n\n`;
   const buttons = [];
 
   for (const s of results) {
     const used  = s.monthly_generations_count ?? 0;
     const limit = s.max_allowed_generations   ?? 0;
     const status = statusLabel[s.status] ?? s.status;
-    const planLine = s.plan_name
-      ? `${status} · ${s.plan_name} · ${used}/${limit} ген.`
-      : status;
+    const planLine = s.plan_name ? `${status} · ${s.plan_name} · ${used}/${limit} ген.` : status;
     const paidLine = s.paid_until ? ` · до ${s.paid_until}` : '';
 
     text += `${emoji[s.salon_type] ?? '🤖'} *${s.salon_name}*\n`;
     text += `   ${planLine}${paidLine} · 👥 ${s.client_count}\n\n`;
 
     buttons.push([
-      { text: `👥 Клиенты`,  callback_data: `clients_${s.bot_token}` },
-      { text: `ℹ️ Инфо`,    callback_data: `info_${s.bot_token}`    },
+      { text: `👥 Клиенты`, callback_data: `clients_${s.bot_token}` },
+      { text: `ℹ️ Инфо`,   callback_data: `info_${s.bot_token}`    },
       { text: `🗑 Удалить`, callback_data: `del_ask_${s.bot_token}` },
     ]);
   }

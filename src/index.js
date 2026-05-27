@@ -2326,7 +2326,7 @@ async function handleSalonCallback(cq, salon, env) {
     );
 
     try {
-      await submitKlingO1(tempData.selfie_url, fullPrompt, { userId, botToken, chatId, salonId: salon.id }, env);
+      await submitFluxKontext(tempData.selfie_url, fullPrompt, { userId, botToken, chatId, salonId: salon.id }, env);
       await setState(env, userId, botToken, S.PROCESSING, {});
     } catch (err) {
       console.error('Kling O1 error:', err);
@@ -2607,32 +2607,32 @@ async function sendSalonPush(env, botToken, text, buttons, salonId) {
   return sent;
 }
 
-// ─── Kling O1 Image — fal.ai async queue ─────────────────────────────────────
-// Docs: https://fal.ai/models/fal-ai/kling-image/o1
-// Uses @Image1 reference syntax; async webhook same as other fal jobs.
-async function submitKlingO1(imageUrl, prompt, meta, env) {
+// ─── FLUX Kontext — image editing with identity preservation ─────────────────
+// Docs: https://fal.ai/models/fal-ai/flux-pro/kontext/api
+async function submitFluxKontext(imageUrl, prompt, meta, env) {
   const workerUrl = env.WORKER_URL.replace(/\/$/, '');
 
-  const res = await fetch(`${FAL_QUEUE}/fal-ai/kling-image/o1`, {
+  const res = await fetch(`${FAL_QUEUE}/fal-ai/flux-pro/kontext`, {
     method  : 'POST',
     headers : {
-      'Authorization'     : `Key ${env.FAL_KEY}`,
-      'Content-Type'      : 'application/json',
-      'x-fal-webhook-url' : `${workerUrl}/fal-callback`,
+      'Authorization'                    : `Key ${env.FAL_KEY}`,
+      'Content-Type'                     : 'application/json',
+      'x-fal-webhook-url'                : `${workerUrl}/fal-callback`,
       'X-Fal-Object-Lifecycle-Preference': 'min',
     },
     body: JSON.stringify({
-      image_urls : [imageUrl],
-      prompt     : `@Image1 ${prompt}`,
-      num_images : 1,
-      resolution : '1K',
-      output_format: 'jpeg',
+      image_url       : imageUrl,
+      prompt          : prompt,
+      guidance_scale  : 3.5,
+      num_images      : 1,
+      output_format   : 'jpeg',
+      safety_tolerance: '6',
     }),
   });
 
-  if (!res.ok) throw new Error(`kling-o1 ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw new Error(`flux-kontext ${res.status}: ${await res.text()}`);
   const q = await res.json();
-  console.log('[kling-o1] queued:', JSON.stringify(q));
+  console.log('[flux-kontext] queued:', JSON.stringify(q));
 
   await env.beauty_ai_db
     .prepare(`INSERT INTO pending_jobs (request_id, user_id, bot_token, chat_id, status_url, response_url, salon_id)
@@ -3417,7 +3417,7 @@ async function handleAdminCallback(cq, env) {
       const colorLabel = color.label !== '✅ Мой цвет' ? ` · ${color.label}` : '';
       await adminSend(env, chatId, `⏳ Генерирую *${styleLabel}${colorLabel}*… ~60 сек ✨`);
       try {
-        await submitKlingO1(tempData.selfie_url, fullPrompt,
+        await submitFluxKontext(tempData.selfie_url, fullPrompt,
           { userId, botToken: env.ADMIN_BOT_TOKEN, chatId, salonId: null }, env);
         await setAdminState(env, userId, A.START, {});
       } catch (err) {

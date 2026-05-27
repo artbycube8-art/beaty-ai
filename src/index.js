@@ -386,7 +386,7 @@ const OFERTA_HTML = `<!DOCTYPE html>
 
 <h2>14. Байланыс және деректемелер</h2>
 <div class="requisites">
-  <p><strong>Оператор:</strong> ЖК Елеуов</p>
+  <p><strong>Оператор:</strong> ИП Елеуов</p>
   <p><strong>ЖСН:</strong> 031222551303</p>
   <p><strong>Тіркелген мекен-жайы:</strong> Қазақстан Республикасы, Астана қ., Тұран д-лы 57/7</p>
   <p><strong>E-mail:</strong> tamerlan.yeleuov@gmail.com</p>

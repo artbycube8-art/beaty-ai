@@ -3369,6 +3369,20 @@ async function handleAdminCallback(cq, env) {
     return;
   }
 
+  // Unlink salon owner (reset admin_chat_id to '0')
+  if (data.startsWith('unlink_owner_')) {
+    const botToken = data.replace('unlink_owner_', '');
+    const salon = await env.beauty_ai_db
+      .prepare('SELECT salon_name FROM salons WHERE bot_token = ?')
+      .bind(botToken).first();
+    if (!salon) { await adminSend(env, chatId, '❌ Салон не найден.'); return; }
+    await env.beauty_ai_db
+      .prepare("UPDATE salons SET admin_chat_id = '0' WHERE bot_token = ?")
+      .bind(botToken).run();
+    await adminSend(env, chatId, `✅ Владелец *${salon.salon_name}* отвязан — ссылка снова свободна.`);
+    return;
+  }
+
   // B2B payment confirm / reject / launch  (format: pok:<uid>:<pkg>, pno:<uid>, pla:<uid>)
   if (data.startsWith('pok:')) {
     await confirmB2bPayment(env, chatId, data);
@@ -3798,11 +3812,20 @@ async function showSalonInfo(env, chatId, botToken) {
   text += `👥 Клиентов: *${clientCount?.cnt ?? 0}*\n`;
   text += `📱 WhatsApp: \`${s.whatsapp_phone ?? '—'}\`\n`;
   if (s.slug) {
-    const stdUsername = s.standard_bot_username ?? 'qrbeatyai_bot';
     text += `🔗 Ссылка клиентов: \`https://t.me/qrbeatyai_bot?start=${s.slug}\`\n`;
   }
+  if (s.admin_chat_id && s.admin_chat_id !== '0') {
+    text += `👤 Владелец привязан: \`${s.admin_chat_id}\`\n`;
+  } else {
+    text += `👤 Владелец: _не привязан_\n`;
+  }
 
-  await adminSend(env, chatId, text);
+  const buttons = [];
+  if (s.admin_chat_id && s.admin_chat_id !== '0') {
+    buttons.push([{ text: '🔓 Отвязать владельца', callback_data: `unlink_owner_${s.bot_token}` }]);
+  }
+
+  await adminSend(env, chatId, text, buttons.length ? { inline_keyboard: buttons } : undefined);
 }
 
 // ── List clients ──────────────────────────────────────────────────────────────

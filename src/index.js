@@ -2827,6 +2827,7 @@ const A = {
   RESET_USER         : 'reset_user',
   UPLOAD_WELCOME     : 'upload_welcome',
   UPLOAD_OFERTA      : 'upload_oferta',
+  SEARCH_TRIAL       : 'search_trial',
 };
 
 async function handleAdminUpdate(update, env) {
@@ -3079,6 +3080,52 @@ async function handleAdminUpdate(update, env) {
         `Теперь он может начать заново через свою ссылку.`
       );
       await showAdminMenu(env, chatId);
+      break;
+    }
+
+    case A.SEARCH_TRIAL: {
+      const query = (message.text ?? '').trim();
+      if (!query) {
+        await adminSend(env, chatId, '❌ Введи название или телефон для поиска:');
+        break;
+      }
+      const like = `%${query}%`;
+      const { results } = await env.beauty_ai_db
+        .prepare(`
+          SELECT s.bot_token, s.salon_name, s.slug, s.admin_chat_id,
+                 s.whatsapp_phone, s.source_track, s.status,
+                 COUNT(u.id) AS client_count
+          FROM salons s
+          LEFT JOIN users u ON u.bot_token = s.bot_token AND u.phone IS NOT NULL
+          WHERE (s.salon_name LIKE ? OR s.whatsapp_phone LIKE ?) AND s.status = 'trial'
+          GROUP BY s.bot_token
+          ORDER BY s.created_at DESC
+          LIMIT 10
+        `)
+        .bind(like, like).all();
+
+      await setAdminState(env, userId, A.START, {});
+
+      if (!results.length) {
+        await adminSend(env, chatId, `🔍 По запросу *«${query}»* ничего не найдено.`);
+        break;
+      }
+
+      const botUsername = env.STANDARD_BOT_USERNAME ?? 'qrbeatyai_bot';
+      let text = `🔍 *Найдено: ${results.length}*\n\n`;
+      const buttons = [];
+      for (const s of results) {
+        const claimed = s.admin_chat_id && s.admin_chat_id !== '0';
+        text += `✂️ *${s.salon_name}*\n`;
+        text += `   ${claimed ? '👤 Привязан' : '⏳ Не привязан'} · 📱 ${s.whatsapp_phone || '—'} · 👥 ${s.client_count}\n`;
+        text += `   🔗 \`https://t.me/${botUsername}?start=${s.slug}\`\n\n`;
+        buttons.push([
+          { text: `ℹ️ ${s.salon_name}`, callback_data: `info_${s.bot_token}` },
+          { text: `🗑 Удалить`,         callback_data: `del_ask_${s.bot_token}` },
+        ]);
+      }
+
+      await adminSend(env, chatId, text, { inline_keyboard: buttons });
       break;
     }
 
@@ -3612,7 +3659,13 @@ async function handleAdminMenuAction(text, env, chatId, userId) {
   if (text === '📋 Мои боты') {
     await showSalons(env, chatId);
   } else if (text === '🧪 Триалы') {
-    await showTrials(env, chatId);
+    const totalRow = await env.beauty_ai_db.prepare("SELECT COUNT(*) as cnt FROM salons WHERE status='trial'").first();
+    const claimedRow = await env.beauty_ai_db.prepare("SELECT COUNT(*) as cnt FROM salons WHERE status='trial' AND admin_chat_id!='0'").first();
+    await setAdminState(env, userId, A.SEARCH_TRIAL, {});
+    await adminSend(env, chatId,
+      `🧪 *Триалы*\n\nВсего: ${totalRow.cnt} · Открыли: ${claimedRow.cnt} · Не открыли: ${totalRow.cnt - claimedRow.cnt}\n\n` +
+      `🔍 Введи название салона или телефон для поиска:\n_Например: Барбершоп или 7700_`
+    );
   } else if (text === '👥 Все клиенты') {
     await showAllClients(env, chatId);
   } else if (text === '📥 Экспорт базы') {

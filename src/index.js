@@ -798,6 +798,13 @@ async function deleteFalPayload(requestId, falKey) {
 }
 
 async function deliverFalResult(job, imageUrl, env) {
+  // Admin test generation: no salon_id and bot_token is the admin token
+  if (!job.salon_id && job.bot_token === env.ADMIN_BOT_TOKEN) {
+    await sendPhotoFile(env.ADMIN_BOT_TOKEN, job.chat_id, imageUrl, '🎨 *Готово!*', env.FAL_KEY);
+    await deleteFalPayload(job.request_id, env.FAL_KEY);
+    return;
+  }
+
   // For Standard-tier: look up by salon_id (FK); Premium: fall back to bot_token
   const salon = job.salon_id
     ? await env.beauty_ai_db.prepare('SELECT * FROM salons WHERE id = ?').bind(job.salon_id).first()
@@ -2828,6 +2835,8 @@ const A = {
   UPLOAD_WELCOME     : 'upload_welcome',
   UPLOAD_OFERTA      : 'upload_oferta',
   SEARCH_TRIAL       : 'search_trial',
+  ADMIN_GEN_SELFIE   : 'admin_gen_selfie',
+  ADMIN_GEN_STYLE    : 'admin_gen_style',
 };
 
 async function handleAdminUpdate(update, env) {
@@ -2887,6 +2896,15 @@ async function handleAdminUpdate(update, env) {
     return;
   }
 
+  // Admin test generation — selfie received
+  if (message.photo && state === A.ADMIN_GEN_SELFIE) {
+    const fileId  = message.photo[message.photo.length - 1].file_id;
+    const fileUrl = await getTelegramFileUrl(env.ADMIN_BOT_TOKEN, fileId);
+    await setAdminState(env, userId, A.ADMIN_GEN_STYLE, { selfie_url: fileUrl });
+    await adminSend(env, chatId, '✅ Селфи получено!\n\n👤 Для кого подбираем причёску?', genderKeyboard());
+    return;
+  }
+
   // Oferta PDF upload
   if (message.document && state === A.UPLOAD_OFERTA) {
     const fileId = message.document.file_id;
@@ -2931,7 +2949,7 @@ async function handleAdminUpdate(update, env) {
   const MENU_BUTTONS = ['📋 Мои боты', '🧪 Триалы', '👥 Все клиенты', '📥 Экспорт базы',
     '📢 Рассылка', '➕ Создать триал', '⏭ Скипнуть триал', '📄 Шаблон CSV',
     '📤 Загрузить CSV', '🔗 Привязать бот', '➕ Добавить бота',
-    '🖼 Фото приветствия', '🔄 Сбросить клиента', '📋 Загрузить оферту', '🏠 Главное меню'];
+    '🖼 Фото приветствия', '🔄 Сбросить клиента', '📋 Загрузить оферту', '🎨 Тест генерации', '🏠 Главное меню'];
   if (MENU_BUTTONS.includes(message.text)) {
     await handleAdminMenuAction(message.text, env, chatId, userId);
     return;
@@ -3346,7 +3364,70 @@ async function handleAdminCallback(cq, env) {
     .prepare('SELECT * FROM user_states WHERE user_id = ? AND bot_token = ?')
     .bind(userId, 'admin')
     .first();
-  const tempData = JSON.parse(stateRow?.temp_data ?? '{}');
+  const adminState = stateRow?.state ?? A.START;
+  const tempData   = JSON.parse(stateRow?.temp_data ?? '{}');
+
+  // ── Admin test generation callbacks ──────────────────────────────────────
+  if (adminState === A.ADMIN_GEN_STYLE) {
+    // Gender selection
+    if (data.startsWith('gender_')) {
+      const gender = data === 'gender_male' ? 'male' : 'female';
+      await setAdminState(env, userId, A.ADMIN_GEN_STYLE, { ...tempData, gender });
+      const kb = gender === 'male' ? maleStylesKeyboard() : femaleStylesKeyboard();
+      await adminSend(env, chatId, '💇 Выберите *стиль причёски*:', kb);
+      return;
+    }
+    // Style selection
+    if (data.startsWith('mstyle_') || data.startsWith('fstyle_')) {
+      const isMale   = data.startsWith('mstyle_');
+      const styleKey = data.replace(isMale ? 'mstyle_' : 'fstyle_', '');
+      const preset   = (isMale ? MALE_STYLES : FEMALE_STYLES)[styleKey];
+      if (!preset || !tempData.selfie_url) {
+        await adminSend(env, chatId, '⚠️ Начните заново — пришлите селфи.');
+        await setAdminState(env, userId, A.ADMIN_GEN_SELFIE, {});
+        return;
+      }
+      await setAdminState(env, userId, A.ADMIN_GEN_STYLE, {
+        ...tempData,
+        style_label     : preset.label,
+        style_prompt    : preset.hairPrompt,
+        style_is_default: styleKey === 'default',
+        style_is_male   : isMale,
+      });
+      await adminSend(env, chatId, '🎨 Выберите цвет волос:', colorKeyboard());
+      return;
+    }
+    // Color selection → submit to fal.ai
+    if (data.startsWith('color_')) {
+      const colorKey = data.replace('color_', '');
+      const color    = HAIR_COLORS[colorKey];
+      if (!color || !tempData.selfie_url || !tempData.style_prompt) {
+        await adminSend(env, chatId, '⚠️ Начните заново — пришлите селфи.');
+        await setAdminState(env, userId, A.ADMIN_GEN_SELFIE, {});
+        return;
+      }
+      if (tempData.style_is_default && !color.colorPrompt) {
+        await adminSend(env, chatId, '🎨 Оставляете свою причёску — выберите *новый цвет*:', colorKeyboard());
+        return;
+      }
+      const faceLock  = tempData.style_is_male ? FACE_LOCK_M : FACE_LOCK_F;
+      const colorPart = color.colorPrompt ? ` Also color the hair to ${color.colorPrompt}.` : '';
+      const fullPrompt = faceLock + tempData.style_prompt + colorPart;
+      const styleLabel = tempData.style_label ?? '';
+      const colorLabel = color.label !== '✅ Мой цвет' ? ` · ${color.label}` : '';
+      await adminSend(env, chatId, `⏳ Генерирую *${styleLabel}${colorLabel}*… Пришлю через ~60 сек ✨`);
+      try {
+        await submitFluxKontext(tempData.selfie_url, fullPrompt,
+          { userId, botToken: env.ADMIN_BOT_TOKEN, chatId, salonId: null }, env);
+        await setAdminState(env, userId, A.START, {});
+      } catch (err) {
+        console.error('[admin gen] error:', err);
+        await adminSend(env, chatId, '❌ Ошибка генерации: ' + err.message);
+        await setAdminState(env, userId, A.ADMIN_GEN_SELFIE, {});
+      }
+      return;
+    }
+  }
 
   // Discount selected during add-bot flow
   if (data.startsWith('adisc_')) {
@@ -3648,7 +3729,8 @@ async function showAdminMenu(env, chatId) {
         ['🔗 Привязать бот', '➕ Добавить бота'],
         ['📊 Общая статистика', '👮 Администраторы'],
         ['🖼 Фото приветствия', '🔄 Сбросить клиента'],
-        ['📋 Загрузить оферту', '🏠 Главное меню'],
+        ['📋 Загрузить оферту', '🎨 Тест генерации'],
+        ['🏠 Главное меню'],
       ],
       resize_keyboard: true,
     }
@@ -3691,6 +3773,9 @@ async function handleAdminMenuAction(text, env, chatId, userId) {
     await showAdminStats(env, chatId);
   } else if (text === '👮 Администраторы') {
     await showAdminsList(env, chatId);
+  } else if (text === '🎨 Тест генерации') {
+    await setAdminState(env, userId, A.ADMIN_GEN_SELFIE, {});
+    await adminSend(env, chatId, '🎨 *Тест генерации*\n\nПришли *СЕЛФИ* — сгенерирую причёску без лимитов:');
   } else if (text === '📋 Загрузить оферту') {
     await setAdminState(env, userId, A.UPLOAD_OFERTA, {});
     await adminSend(env, chatId,

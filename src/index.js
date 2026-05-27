@@ -51,21 +51,21 @@ const S = {
 
 // ─── Subscription tariffs ─────────────────────────────────────────────────────
 const TARIFFS = {
-  start: { name: 'Старт',   limit: 150,  price: 9900  },
-  basic: { name: 'Базовый', limit: 300,  price: 14900 },
-  pro:   { name: 'Про',     limit: 600,  price: 24900 },
-  max:   { name: 'Макс',    limit: 1200, price: 39900 },
+  start: { name: 'Старт',   limit: 150,  price: 14900 },
+  basic: { name: 'Базовый', limit: 300,  price: 24900 },
+  pro:   { name: 'Про',     limit: 600,  price: 39900 },
+  max:   { name: 'Макс',    limit: 1200, price: 59900 },
 };
 
 const B2B_PACKAGES = {
-  b2b_pkg_mini_shared : { name: 'Мини',     price: 9900,  gens: 150,  own: false, short: 'mi_s' },
-  b2b_pkg_std_shared  : { name: 'Стандарт', price: 14900, gens: 300,  own: false, short: 'st_s' },
-  b2b_pkg_biz_shared  : { name: 'Бизнес',   price: 24900, gens: 600,  own: false, short: 'bi_s' },
-  b2b_pkg_net_shared  : { name: 'Сеть',     price: 44900, gens: 1200, own: false, short: 'ne_s' },
-  b2b_pkg_mini_own    : { name: 'Мини',     price: 34900, gens: 150,  own: true,  short: 'mi_o' },
-  b2b_pkg_std_own     : { name: 'Стандарт', price: 39900, gens: 300,  own: true,  short: 'st_o' },
-  b2b_pkg_biz_own     : { name: 'Бизнес',   price: 49900, gens: 600,  own: true,  short: 'bi_o' },
-  b2b_pkg_net_own     : { name: 'Сеть',     price: 69900, gens: 1200, own: true,  short: 'ne_o' },
+  b2b_pkg_mini_shared : { name: 'Мини',     price: 14900, gens: 150,  own: false, short: 'mi_s' },
+  b2b_pkg_std_shared  : { name: 'Стандарт', price: 24900, gens: 300,  own: false, short: 'st_s' },
+  b2b_pkg_biz_shared  : { name: 'Бизнес',   price: 39900, gens: 600,  own: false, short: 'bi_s' },
+  b2b_pkg_net_shared  : { name: 'Сеть',     price: 69900, gens: 1200, own: false, short: 'ne_s' },
+  b2b_pkg_mini_own    : { name: 'Мини',     price: 49900, gens: 150,  own: true,  short: 'mi_o' },
+  b2b_pkg_std_own     : { name: 'Стандарт', price: 59900, gens: 300,  own: true,  short: 'st_o' },
+  b2b_pkg_biz_own     : { name: 'Бизнес',   price: 79900, gens: 600,  own: true,  short: 'bi_o' },
+  b2b_pkg_net_own     : { name: 'Сеть',     price: 99900, gens: 1200, own: true,  short: 'ne_o' },
 };
 
 // Reverse map: short code → full package key (for admin callback parsing)

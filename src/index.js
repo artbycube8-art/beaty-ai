@@ -2927,10 +2927,10 @@ async function handleAdminUpdate(update, env) {
   }
 
   // Menu buttons always work regardless of current state
-  const MENU_BUTTONS = ['📋 Мои боты', '👥 Все клиенты', '📥 Экспорт базы',
+  const MENU_BUTTONS = ['📋 Мои боты', '🧪 Триалы', '👥 Все клиенты', '📥 Экспорт базы',
     '📢 Рассылка', '➕ Создать триал', '⏭ Скипнуть триал', '📄 Шаблон CSV',
     '📤 Загрузить CSV', '🔗 Привязать бот', '➕ Добавить бота',
-    '🖼 Фото приветствия', '🔄 Сбросить клиента', '🏠 Главное меню'];
+    '🖼 Фото приветствия', '🔄 Сбросить клиента', '📋 Загрузить оферту', '🏠 Главное меню'];
   if (MENU_BUTTONS.includes(message.text)) {
     await handleAdminMenuAction(message.text, env, chatId, userId);
     return;
@@ -3579,7 +3579,8 @@ async function showAdminMenu(env, chatId) {
     '🤖 *Панель управления Beauty AI*\n\nВыбери действие:',
     {
       keyboard: [
-        ['📋 Мои боты', '👥 Все клиенты'],
+        ['📋 Мои боты', '🧪 Триалы'],
+        ['👥 Все клиенты'],
         ['📥 Экспорт базы', '📢 Рассылка'],
         ['➕ Создать триал', '⏭ Скипнуть триал'],
         ['📄 Шаблон CSV', '📤 Загрузить CSV'],
@@ -3596,6 +3597,8 @@ async function showAdminMenu(env, chatId) {
 async function handleAdminMenuAction(text, env, chatId, userId) {
   if (text === '📋 Мои боты') {
     await showSalons(env, chatId);
+  } else if (text === '🧪 Триалы') {
+    await showTrials(env, chatId);
   } else if (text === '👥 Все клиенты') {
     await showAllClients(env, chatId);
   } else if (text === '📥 Экспорт базы') {
@@ -3664,10 +3667,11 @@ async function handleAdminMenuAction(text, env, chatId, userId) {
 // ── List salons ───────────────────────────────────────────────────────────────
 
 async function showSalons(env, chatId) {
-  const totalRow = await env.beauty_ai_db
-    .prepare('SELECT COUNT(*) as cnt FROM salons').first();
-  const activeRow = await env.beauty_ai_db
-    .prepare("SELECT COUNT(*) as cnt FROM salons WHERE status IN ('standard_active','premium_active')").first();
+  const [totalRow, activeRow, trialRow] = await Promise.all([
+    env.beauty_ai_db.prepare('SELECT COUNT(*) as cnt FROM salons').first(),
+    env.beauty_ai_db.prepare("SELECT COUNT(*) as cnt FROM salons WHERE status IN ('standard_active','premium_active')").first(),
+    env.beauty_ai_db.prepare("SELECT COUNT(*) as cnt FROM salons WHERE status = 'trial'").first(),
+  ]);
 
   const { results } = await env.beauty_ai_db
     .prepare(`
@@ -3677,24 +3681,26 @@ async function showSalons(env, chatId) {
              COUNT(u.id) AS client_count
       FROM salons s
       LEFT JOIN users u ON u.bot_token = s.bot_token AND u.phone IS NOT NULL
+      WHERE s.status IN ('standard_active','premium_active')
       GROUP BY s.bot_token
       ORDER BY s.created_at DESC
       LIMIT 20
     `)
     .all();
 
+  const emoji       = { barber: '✂️', makeup: '💄', nails: '💅' };
+  const statusLabel = { standard_active: '✅ Стандарт', premium_active: '⭐ Премиум', expired: '❌ Истекла' };
+
+  let text = `📋 *Активные боты*\n`;
+  text += `✅ Активных: ${activeRow.cnt} · 🧪 Триалов: ${trialRow.cnt} · Всего: ${totalRow.cnt}\n\n`;
+
   if (!results.length) {
-    await adminSend(env, chatId, 'Пока нет ботов. Нажми *➕ Добавить бота*.');
+    text += '_Нет активных подписок. Триалы смотри в кнопке 🧪 Триалы._';
+    await adminSend(env, chatId, text);
     return;
   }
 
-  const emoji       = { barber: '✂️', makeup: '💄', nails: '💅' };
-  const statusLabel = { trial: '🧪 Триал', standard_active: '✅ Активна', premium_active: '✅ Активна', expired: '❌ Истекла' };
-
-  let text = `📋 *Боты (всего: ${totalRow.cnt}, активных: ${activeRow.cnt})*\n`;
-  text += `_Показаны последние 20_\n\n`;
   const buttons = [];
-
   for (const s of results) {
     const used  = s.monthly_generations_count ?? 0;
     const limit = s.max_allowed_generations   ?? 0;
@@ -3707,6 +3713,53 @@ async function showSalons(env, chatId) {
 
     buttons.push([
       { text: `👥 Клиенты`, callback_data: `clients_${s.bot_token}` },
+      { text: `ℹ️ Инфо`,   callback_data: `info_${s.bot_token}`    },
+      { text: `🗑 Удалить`, callback_data: `del_ask_${s.bot_token}` },
+    ]);
+  }
+
+  await adminSend(env, chatId, text, { inline_keyboard: buttons });
+}
+
+async function showTrials(env, chatId) {
+  const totalRow = await env.beauty_ai_db
+    .prepare("SELECT COUNT(*) as cnt FROM salons WHERE status = 'trial'").first();
+  const claimedRow = await env.beauty_ai_db
+    .prepare("SELECT COUNT(*) as cnt FROM salons WHERE status = 'trial' AND admin_chat_id != '0'").first();
+
+  const { results } = await env.beauty_ai_db
+    .prepare(`
+      SELECT s.bot_token, s.salon_name, s.salon_type, s.admin_chat_id,
+             s.whatsapp_phone, s.source_track, s.created_at,
+             COUNT(u.id) AS client_count
+      FROM salons s
+      LEFT JOIN users u ON u.bot_token = s.bot_token AND u.phone IS NOT NULL
+      WHERE s.status = 'trial'
+      GROUP BY s.bot_token
+      ORDER BY s.created_at DESC
+      LIMIT 20
+    `)
+    .all();
+
+  let text = `🧪 *Триалы*\n`;
+  text += `Всего: ${totalRow.cnt} · Открыли: ${claimedRow.cnt} · Не открыли: ${totalRow.cnt - claimedRow.cnt}\n`;
+  text += `_Показаны последние 20_\n\n`;
+
+  if (!results.length) {
+    text += '_Триалов пока нет._';
+    await adminSend(env, chatId, text);
+    return;
+  }
+
+  const emoji = { barber: '✂️', makeup: '💄', nails: '💅' };
+  const buttons = [];
+
+  for (const s of results) {
+    const claimed = s.admin_chat_id && s.admin_chat_id !== '0';
+    text += `${emoji[s.salon_type] ?? '🤖'} *${s.salon_name}*\n`;
+    text += `   ${claimed ? '👤 Открыл' : '⏳ Не открыт'} · 📱 ${s.whatsapp_phone || '—'} · 👥 ${s.client_count}\n\n`;
+
+    buttons.push([
       { text: `ℹ️ Инфо`,   callback_data: `info_${s.bot_token}`    },
       { text: `🗑 Удалить`, callback_data: `del_ask_${s.bot_token}` },
     ]);

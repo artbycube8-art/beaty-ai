@@ -78,37 +78,37 @@ const FAL_QUEUE = 'https://queue.fal.run';
 // ─── Barber presets — FLUX Kontext editing instructions ──────────────────────
 // Two FACE_LOCK variants — gender-specific so the model never confuses identity.
 // Prepended to every prompt so the model reads it first.
-const FACE_LOCK_M = 'ABSOLUTE RULE: The person in this photo is MALE. DO NOT change the face, masculine bone structure, jawline, brow ridge, eyes, nose, mouth, chin, ears, neck, skin tone, or any facial feature. DO NOT feminize the face or any part of it under any circumstances. The face must be pixel-identical to the input. ONLY edit the hair on the scalp. Keep clothing, background, pose, and lighting unchanged. HAIR EDIT ONLY: ';
-const FACE_LOCK_F = 'ABSOLUTE RULE: The person in this photo is FEMALE. DO NOT change the face, feminine bone structure, eyes, nose, mouth, chin, cheekbones, ears, neck, skin tone, or any facial feature. DO NOT masculinize the face or any part of it under any circumstances. The face must be pixel-identical to the input. ONLY edit the hair on the scalp. Keep clothing, background, pose, and lighting unchanged. HAIR EDIT ONLY: ';
+const FACE_LOCK_M = 'Replace ONLY the hair. Face, skin, eyes, nose, mouth, jaw, ears, neck, clothing, background — all pixel-identical to original. Male face unchanged. New hairstyle: ';
+const FACE_LOCK_F = 'Replace ONLY the hair. Face, skin, eyes, nose, mouth, jaw, ears, neck, clothing, background — all pixel-identical to original. Female face unchanged. New hairstyle: ';
 
 const MALE_STYLES = {
   // ── Сохранить ──────────────────────────────────────────────────────────────
-  default    : { label: '✅ Свою причёску',      hairPrompt: "Keep the exact current hairstyle completely unchanged — same haircut, same length, same style. Only apply color changes if specified." },
+  default    : { label: '✅ Свою причёску',      hairPrompt: "same hairstyle as in the original photo, no changes to hair whatsoever.", isDefault: true },
   // ── Короткие ───────────────────────────────────────────────────────────────
-  buzz       : { label: '⚡ Buzz Cut',           hairPrompt: "Change ONLY the hair into a buzz cut: uniformly very short (~6mm grade 2) over the entire head — top, sides, and back all equally short." },
-  crewcut    : { label: '🪖 Кру кат',            hairPrompt: "Change ONLY the hair into a crew cut: very short tapered sides fading to skin, slightly longer flat textured top (1-2cm), clean military-style lines." },
-  caesar     : { label: '🏛 Цезарь',             hairPrompt: "Change ONLY the hair into a Caesar cut: short uniform hair all over (2-3cm) with a distinct straight horizontal fringe across the forehead, no fade." },
+  buzz       : { label: '⚡ Buzz Cut',           hairPrompt: "buzz cut: uniformly clipped hair 4-6mm across the entire scalp — top, sides and back identically short, no fade, no styling, raw machine-cut texture." },
+  crewcut    : { label: '🪖 Кру кат',            hairPrompt: "crew cut: sides and back taper-faded to skin, flat textured top 10-15mm long, squared-off at the crown, clean sharp lines at the temples and neck." },
+  caesar     : { label: '🏛 Цезарь',             hairPrompt: "Caesar cut: uniform 20-25mm all over with a hard straight horizontal fringe sitting flat across the forehead at mid-forehead height, no fade, dense blunt texture." },
   // ── Фейды ──────────────────────────────────────────────────────────────────
-  fade       : { label: '🔪 Фейд',              hairPrompt: "Change ONLY the hair into a bald fade: sides and back shaved to skin at the bottom, gradually blending upward into 3-5cm of textured hair on top. Sharp temple and neckline lineup." },
-  taper      : { label: '🎯 Тейпер',            hairPrompt: "Change ONLY the hair into a modern taper fade: sides taper from medium at the top down to skin-short at the bottom, top has 4-6cm of textured hair." },
-  frenchcrop : { label: '🌾 Французский кроп',  hairPrompt: "Change ONLY the hair into a French crop: short textured hair on top (2-3cm) with a clear straight horizontal fringe at eyebrow level, sides faded very short." },
-  edgar      : { label: '⬛ Эдгар',              hairPrompt: "Change ONLY the hair into an Edgar cut: flat short hair on top (2-3cm) with a perfectly straight blunt horizontal fringe at the forehead, sides faded very short, boxy rectangular top." },
+  fade       : { label: '🔪 Фейд',              hairPrompt: "high bald fade: skin-bare at the sides and nape, blending smoothly upward into 35-45mm of textured hair on top. Razor-sharp lineup at temples and neck, strong contrast between bare sides and full top." },
+  taper      : { label: '🎯 Тейпер',            hairPrompt: "low taper fade: gradual fade starting just above the ear down to skin at the nape, sides medium-short, top 40-50mm of natural textured hair with a relaxed side-swept or forward finish." },
+  frenchcrop : { label: '🌾 Французский кроп',  hairPrompt: "French crop: 20-25mm flat textured top, hard straight fringe cut horizontally at eyebrow level, sides high-faded to skin, visible scalp contrast at the temples, clean boxy silhouette." },
+  edgar      : { label: '⬛ Эдгар',              hairPrompt: "Edgar cut: perfectly flat top 20mm long, razor-blunt horizontal fringe sliced straight across the forehead, sides faded to skin with a very sharp high lineup, boxy rectangular top profile." },
   // ── Укладки ────────────────────────────────────────────────────────────────
-  slickback  : { label: '💆 Слик бэк',          hairPrompt: "Change ONLY the hair into a slick back: all hair on top combed straight backward from forehead to nape in a smooth glossy wet-look flow, short faded sides." },
-  quiff      : { label: '🌟 Квифф',             hairPrompt: "Change ONLY the hair into a quiff: front section swept upward and back creating clear dramatic height and volume above the forehead, sides faded short." },
-  pompadour  : { label: '💈 Помпадур',          hairPrompt: "Change ONLY the hair into a pompadour: large volume swept dramatically upward and backward from the forehead, significant height at the front, sides tapered short." },
-  undercut   : { label: '✂️ Андеркат',          hairPrompt: "Change ONLY the hair into an undercut: sides and back shaved nearly to skin, top hair stays long (5-8cm) slicked or swept back, stark contrast line between short sides and longer top." },
-  fauxhawk   : { label: '🦅 Фохок',             hairPrompt: "Change ONLY the hair into a faux hawk: sides faded very short, strip of hair down the center of the head styled upward into a ridge, less extreme than a mohawk." },
+  slickback  : { label: '💆 Слик бэк',          hairPrompt: "slick back: 60-70mm of hair on top swept straight backward from hairline to nape in a smooth wet-look finish with deep shine, sides high-faded to skin, no volume at the front — all swept flat." },
+  quiff      : { label: '🌟 Квифф',             hairPrompt: "quiff: front section lifted 5-7cm upward then swept back in a prominent voluminous peak above the forehead, sides faded short, height clearly visible in the front profile, styled with hold." },
+  pompadour  : { label: '💈 Помпадур',          hairPrompt: "pompadour: massive front section swept dramatically up and back creating 6-8cm of height above the forehead, glossy finish, sides tight-tapered, strong architectural volume at the front." },
+  undercut   : { label: '✂️ Андеркат',          hairPrompt: "disconnected undercut: sides and back buzzed to 3mm with a hard disconnect line, top 60-70mm left long and loosely swept to one side, stark visible contrast between shaved sides and long top." },
+  fauxhawk   : { label: '🦅 Фохок',             hairPrompt: "faux hawk: sides faded to skin, central strip of hair from forehead to crown styled into a 4-5cm tall ridge running down the middle of the head, clearly visible crest from front and side." },
   // ── Средняя длина ──────────────────────────────────────────────────────────
-  twoblock   : { label: '🎌 Two-block',          hairPrompt: "Change ONLY the hair into a two-block cut: sides and back cut very short or faded, top left significantly longer (7-10cm) and styled forward or to the side, clear division between short sides and long top. Popular K-pop style." },
-  curtainmen : { label: '🪞 Кёртины (пробор)',   hairPrompt: "Change ONLY the hair into a curtain hairstyle: medium length hair (8-12cm) with a center part, falling to both sides and framing the face, natural flow, slightly wavy texture allowed." },
-  mullet     : { label: '🎸 Мулет',             hairPrompt: "Change ONLY the hair into a mullet: short cropped on the top and sides, distinctly longer in the back (reaching the nape or collar), clear contrast between short front/sides and longer back." },
-  // ── Кудри (три варианта) ───────────────────────────────────────────────────
-  curlyshort : { label: '🌀 Кудри короткие',    hairPrompt: "Change ONLY the hair into short curly hair: tight coils or defined curls all over the head, 2-4cm length, natural afro-textured or coily look." },
-  curlymed   : { label: '🌀 Кудри средние',     hairPrompt: "Change ONLY the hair into medium-length curly hair: defined bouncy curls 6-10cm long covering the top and sides, full volume, natural curl pattern." },
-  curlylong  : { label: '🌀 Кудри длинные',     hairPrompt: "Change ONLY the hair into long curly hair: loose big curls or waves reaching past the ears and neck, 12-18cm long, voluminous and flowing." },
+  twoblock   : { label: '🎌 Two-block',          hairPrompt: "two-block cut (K-pop style): sides and back clipped very short 5-8mm, top 80-100mm left long and swept forward or to the side, extreme length contrast between short sides and long flowing top." },
+  curtainmen : { label: '🪞 Кёртины (пробор)',   hairPrompt: "curtain hair: 90-110mm of hair parted down the center, hanging to both sides and falling past the ears framing the face, natural slightly wavy texture, relaxed 90s-style flow." },
+  mullet     : { label: '🎸 Мулет',             hairPrompt: "mullet: short cropped top and sides 20-30mm, back dramatically longer 100-150mm reaching the collar or below, distinct transition from short front to long back, business-in-front party-in-back silhouette." },
+  // ── Кудри ──────────────────────────────────────────────────────────────────
+  curlyshort : { label: '🌀 Кудри короткие',    hairPrompt: "short curly hair: tight defined coils 25-35mm covering the entire head uniformly, springy natural curl texture, full but close-cropped shape." },
+  curlymed   : { label: '🌀 Кудри средние',     hairPrompt: "medium curly hair: big bouncy defined curls 70-90mm long, wide full silhouette, natural curl pattern with visible spiral definition, voluminous rounded shape." },
+  curlylong  : { label: '🌀 Кудри длинные',     hairPrompt: "long curly hair: loose flowing curls and waves 130-160mm reaching below the ears and neck, voluminous movement, romantic tousled masculine long curl." },
   // ── Длинные ────────────────────────────────────────────────────────────────
-  longback   : { label: '🧖 Длинные назад',     hairPrompt: "Change ONLY the hair to long hair (past shoulders) neatly slicked or tied back, sleek and straight, masculine long hairstyle." },
+  longback   : { label: '🧖 Длинные назад',     hairPrompt: "long straight hair 160-200mm slicked neatly backward past the shoulders, sleek and flat with a glossy finish, masculine long hairstyle parted at the side." },
 };
 
 const FEMALE_STYLES = {

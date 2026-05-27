@@ -1277,6 +1277,28 @@ async function handleStandardUpdate(update, env) {
     const chatId = String(cq.message.chat.id);
     const userId = String(cq.from.id);
 
+    // Send oferta PDF
+    if (cq.data === 'show_oferta') {
+      await fetch(`${TELEGRAM_API}/bot${botToken}/answerCallbackQuery`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ callback_query_id: cq.id }),
+      });
+      const row = await env.beauty_ai_db
+        .prepare("SELECT value FROM settings WHERE key = 'oferta_pdf'").first();
+      if (row?.value) {
+        const form = new FormData();
+        form.append('chat_id', chatId);
+        form.append('document', row.value);
+        form.append('caption', '📋 *Публичная оферта Beauty AI*\n_KZ / RU версии в одном документе_');
+        form.append('parse_mode', 'Markdown');
+        await fetch(`${TELEGRAM_API}/bot${botToken}/sendDocument`, { method: 'POST', body: form });
+      } else {
+        const workerUrl = env?.WORKER_URL ?? 'https://beauty-ai-saas.artbycube8.workers.dev';
+        await sendMessage(botToken, chatId, `📋 [Публичная оферта](${workerUrl}/oferta)`);
+      }
+      return;
+    }
+
     // Own-bot connection choice after payment
     if (cq.data === 'b2b_own_self' || cq.data === 'b2b_own_support') {
       await fetch(`${TELEGRAM_API}/bot${botToken}/answerCallbackQuery`, {
@@ -1627,8 +1649,8 @@ async function showB2bTariffSelector(botToken, chatId, env) {
       ],
       [{ text: '🤖 Хочу свой бот (+₸25,000)', callback_data: 'b2b_hosting_own' }],
       [
-        { text: '💬 Написать в поддержку', url: supportLink },
-        { text: '📄 Оферта',               url: ofertaUrl   },
+        { text: '💬 Написать в поддержку', url: supportLink          },
+        { text: '📄 Оферта',               callback_data: 'show_oferta' },
       ],
     ]}
   );
@@ -2804,6 +2826,7 @@ const A = {
   ADD_ADMIN          : 'add_admin',
   RESET_USER         : 'reset_user',
   UPLOAD_WELCOME     : 'upload_welcome',
+  UPLOAD_OFERTA      : 'upload_oferta',
 };
 
 async function handleAdminUpdate(update, env) {
@@ -2859,6 +2882,18 @@ async function handleAdminUpdate(update, env) {
     await adminSend(env, chatId,
       `✅ Фото ${slot} сохранено! Клиенты увидят его при первом запуске бота.`
     );
+    await showAdminMenu(env, chatId);
+    return;
+  }
+
+  // Oferta PDF upload
+  if (message.document && state === A.UPLOAD_OFERTA) {
+    const fileId = message.document.file_id;
+    await env.beauty_ai_db
+      .prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('oferta_pdf', ?, datetime('now'))")
+      .bind(fileId).run();
+    await setAdminState(env, userId, A.START, {});
+    await adminSend(env, chatId, '✅ Оферта сохранена! Клиенты будут получать этот PDF по кнопке в тарифном меню.');
     await showAdminMenu(env, chatId);
     return;
   }
@@ -3551,7 +3586,7 @@ async function showAdminMenu(env, chatId) {
         ['🔗 Привязать бот', '➕ Добавить бота'],
         ['📊 Общая статистика', '👮 Администраторы'],
         ['🖼 Фото приветствия', '🔄 Сбросить клиента'],
-        ['🏠 Главное меню'],
+        ['📋 Загрузить оферту', '🏠 Главное меню'],
       ],
       resize_keyboard: true,
     }
@@ -3586,6 +3621,13 @@ async function handleAdminMenuAction(text, env, chatId, userId) {
     await showAdminStats(env, chatId);
   } else if (text === '👮 Администраторы') {
     await showAdminsList(env, chatId);
+  } else if (text === '📋 Загрузить оферту') {
+    await setAdminState(env, userId, A.UPLOAD_OFERTA, {});
+    await adminSend(env, chatId,
+      '📋 *Загрузка оферты*\n\n' +
+      'Пришли PDF-файл оферты — клиенты будут получать его по кнопке в тарифном меню.\n\n' +
+      '_Как получить PDF: открой_ `https://beauty-ai-saas.artbycube8.workers.dev/oferta` _в браузере → Cmd+P → Сохранить как PDF_'
+    );
   } else if (text === '🖼 Фото приветствия') {
     await adminSend(env, chatId,
       '🖼 *Фото приветствия*\n\nЭти фото показываются клиентам при первом запуске бота (примеры до/после).\n\nКакое фото загрузить?',

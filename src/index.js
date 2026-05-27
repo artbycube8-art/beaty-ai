@@ -4111,7 +4111,7 @@ async function finishAddBot(env, chatId, userId, data) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // Video tutorial URL — update when you have a link
-const TUTORIAL_VIDEO_URL = 'https://youtube.com';
+const TUTORIAL_VIDEO_URL = 'https://www.youtube.com/shorts/Cca3gRdmbyY';
 
 function generateBotNames(salonName) {
   const displayName = salonName.trim() + ' AI';

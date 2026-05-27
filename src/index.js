@@ -969,10 +969,10 @@ function salonTypeKeyboard(prefix) {
 
 function tariffKeyboard() {
   return { inline_keyboard: [
-    [{ text: '🟢 Старт · 150 ген. · ₸9,900',   callback_data: 'stariff_start' }],
-    [{ text: '🔵 Базовый · 300 ген. · ₸14,900', callback_data: 'stariff_basic' }],
-    [{ text: '🟣 Про · 600 ген. · ₸24,900',     callback_data: 'stariff_pro'   }],
-    [{ text: '⭐ Макс · 1200 ген. · ₸39,900',   callback_data: 'stariff_max'   }],
+    [{ text: '🟢 Старт · 150 ген. · ₸14,900',  callback_data: 'stariff_start' }],
+    [{ text: '🔵 Базовый · 300 ген. · ₸24,900', callback_data: 'stariff_basic' }],
+    [{ text: '🟣 Про · 600 ген. · ₸39,900',     callback_data: 'stariff_pro'   }],
+    [{ text: '⭐ Макс · 1200 ген. · ₸59,900',   callback_data: 'stariff_max'   }],
   ]};
 }
 
@@ -1040,10 +1040,10 @@ async function handleUpdate(update, salon, env) {
     if (!salon.plan_name && !salon.paid_until && salon.status !== 'trial') {
       await sendMessage(botToken, chatId,
         '🔒 *Нет активной подписки*\n\nВыберите тариф чтобы активировать бота:\n\n' +
-        '🟢 Старт — 150 ген./мес — ₸9,900\n' +
-        '🔵 Базовый — 300 ген./мес — ₸14,900\n' +
-        '🟣 Про — 600 ген./мес — ₸24,900\n' +
-        '⭐ Макс — 1200 ген./мес — ₸39,900',
+        '🟢 Старт — 150 ген./мес — ₸14,900\n' +
+        '🔵 Базовый — 300 ген./мес — ₸24,900\n' +
+        '🟣 Про — 600 ген./мес — ₸39,900\n' +
+        '⭐ Макс — 1200 ген./мес — ₸59,900',
         tariffKeyboard()
       );
       return;
@@ -1451,9 +1451,9 @@ async function handleStandardUpdate(update, env) {
         await setState(env, userId, botToken, S.B2B_NAME, { source_track: slug });
         await sendMessage(botToken, chatId,
           `✂️ *Beauty AI — ИИ-примерка причёсок для вашего салона*\n\n` +
-          `Ваши клиенты смогут примерить стрижку или маникюр прямо в Telegram — до записи к вам.\n\n` +
-          `*Сейчас вы пройдёте через это сами — как ваш клиент.*\n` +
-          `Займёт 3 минуты.\n\n` +
+          `Салоны которые подключили Beauty AI получают клиентов которые уже знают чего хотят — они примерили стрижку в Telegram *до записи* и пришли с готовым результатом.\n\n` +
+          `Мастеру не нужно угадывать. Клиент не разочаровывается. Он возвращается.\n\n` +
+          `*Прямо сейчас вы пройдёте через это как ваш клиент — 3 минуты.*\n\n` +
           `✍️ Как называется ваш салон?`
         );
         return;
@@ -1479,8 +1479,10 @@ async function handleStandardUpdate(update, env) {
         activeSalon = { ...salon, admin_chat_id: userId };
         await sendWelcomePhotos(botToken, chatId, env);
         await sendMessage(botToken, chatId,
-          `✅ *${salon.name || salon.salon_name}* — ваш аккаунт привязан!\n\n` +
-          `Теперь этот бот знает вас как владельца. Начнём тест-драйв — пришлите *СЕЛФИ*:`
+          `✅ *${salon.name || salon.salon_name}* — тест-драйв активирован!\n\n` +
+          `Сейчас вы попробуете бота *глазами вашего клиента*.\n` +
+          `Именно так это будет выглядеть для людей которые к вам придут.\n\n` +
+          `📸 Пришлите *СЕЛФИ* — подберём причёску:`
         );
         await setState(env, userId, botToken, S.WAITING_SELFIE, {});
         await env.beauty_ai_db
@@ -1608,7 +1610,8 @@ async function handleB2bOnboarding(message, env, userId, chatId, botToken, state
 
     await sendMessage(botToken, chatId,
       `🎉 *${salon.name}* — тест-драйв запущен!\n\n` +
-      `Вы попробуете бота *как ваш клиент* — доступно *3 бесплатных генерации*.\n\n` +
+      `Вы сейчас увидите то, что увидит ваш клиент когда зайдёт по ссылке от вашего салона.\n` +
+      `Доступно *3 бесплатные примерки*.\n\n` +
       `${typeHints[salonType] ?? typeHints.barber}`
     );
     await setState(env, userId, botToken, firstStates[salonType] ?? S.WAITING_SELFIE, {});
@@ -1622,24 +1625,25 @@ async function showB2bTariffSelector(botToken, chatId, env) {
   const workerUrl   = env?.WORKER_URL ?? 'https://beauty-ai-saas.artbycube8.workers.dev';
   const ofertaUrl   = `${workerUrl}/oferta`;
   await sendMessage(botToken, chatId,
-    `✅ *Тест-драйв пройден!*\n\n` +
-    `Именно так это выглядит у ваших клиентов — они примеряют причёску прямо в Telegram, ещё *до записи* к вам.\n\n` +
-    `Хотите такого бота для своего салона — чтобы клиенты приходили уже заинтересованными?\n\n` +
+    `✅ *Вы только что прошли это как ваш клиент.*\n\n` +
+    `Именно такой опыт получает человек перед визитом к вам — он уже знает чего хочет, приходит с картинкой, не разочаровывается.\n\n` +
+    `Клиент который примерил — *записывается в 2 раза чаще*. Клиент который доволен результатом — *возвращается и приводит друзей*.\n\n` +
+    `Один новый клиент в месяц окупает бота полностью.\n\n` +
     `━━━━━━━━━━━━━━━━━━━━━\n` +
     `📦 *Тарифы — оплата раз в месяц через Kaspi:*\n\n` +
-    `🟢 *Мини — ₸9,900/мес*\n` +
+    `🟢 *Мини — ₸14,900/мес*\n` +
     `└ До ~50 клиентов в месяц\n` +
-    `└ _Подойдёт для небольшого барбершопа или студии — только открываетесь или хотите попробовать_\n\n` +
-    `🔵 *Стандарт — ₸14,900/мес*\n` +
+    `└ _Небольшой барбершоп или студия — стартуете или тестируете_\n\n` +
+    `🔵 *Стандарт — ₸24,900/мес*\n` +
     `└ До ~100 клиентов в месяц\n` +
-    `└ _Для активно работающего салона — стабильный поток новых клиентов каждый месяц_\n\n` +
-    `🟣 *Бизнес — ₸24,900/мес*\n` +
+    `└ _Активно работающий салон — стабильный поток каждый месяц_\n\n` +
+    `🟣 *Бизнес — ₸39,900/мес*\n` +
     `└ До ~200 клиентов в месяц\n` +
-    `└ _Для загруженного салона с несколькими мастерами — максимальный охват без ограничений_\n\n` +
-    `⭐ *Сеть — ₸44,900/мес*\n` +
+    `└ _Загруженный салон с несколькими мастерами_\n\n` +
+    `⭐ *Сеть — ₸69,900/мес*\n` +
     `└ До ~400 клиентов в месяц\n` +
-    `└ _Для сети точек или крупного заведения — один бот на весь поток_\n\n` +
-    `💡 _Количество клиентов рассчитано из среднего — 3 примерки на человека. Например, тариф Мини даёт 150 генераций в месяц: это ~50 уникальных клиентов по 3 примерки каждый. Хотите давать меньше примерок — клиентов поместится больше. В настройках выставляете сами._\n\n` +
+    `└ _Сеть точек или крупное заведение_\n\n` +
+    `💡 _3 примерки на клиента в среднем. Мини = 150 генераций = ~50 уникальных клиентов. В настройках выставляете сами._\n\n` +
     `━━━━━━━━━━━━━━━━━━━━━\n` +
     `🤖 *Свой бот или общий?*\n` +
     `Общий — клиенты пишут в @qrbeatyai\\_bot по вашей ссылке.\n` +
@@ -1647,12 +1651,12 @@ async function showB2bTariffSelector(botToken, chatId, env) {
     `👇 Выберите тариф:`,
     { inline_keyboard: [
       [
-        { text: '🟢 Мини · ₸9,900',      callback_data: 'b2b_pkg_mini_shared'  },
-        { text: '🔵 Стандарт · ₸14,900', callback_data: 'b2b_pkg_std_shared'   },
+        { text: '🟢 Мини · ₸14,900',     callback_data: 'b2b_pkg_mini_shared' },
+        { text: '🔵 Стандарт · ₸24,900', callback_data: 'b2b_pkg_std_shared'  },
       ],
       [
-        { text: '🟣 Бизнес · ₸24,900',   callback_data: 'b2b_pkg_biz_shared'   },
-        { text: '⭐ Сеть · ₸44,900',     callback_data: 'b2b_pkg_net_shared'   },
+        { text: '🟣 Бизнес · ₸39,900',   callback_data: 'b2b_pkg_biz_shared'  },
+        { text: '⭐ Сеть · ₸69,900',     callback_data: 'b2b_pkg_net_shared'  },
       ],
       [{ text: '🤖 Хочу свой бот (+₸25,000)', callback_data: 'b2b_hosting_own' }],
       [
@@ -1674,12 +1678,12 @@ async function handleB2bPackageCallback(data, botToken, chatId, userId, env) {
       `Выберите пакет подписки 👇`,
       { inline_keyboard: [
         [
-          { text: '🟢 Мини · ₸34,900',     callback_data: 'b2b_pkg_mini_own' },
-          { text: '🔵 Стандарт · ₸39,900', callback_data: 'b2b_pkg_std_own'  },
+          { text: '🟢 Мини · ₸49,900',     callback_data: 'b2b_pkg_mini_own' },
+          { text: '🔵 Стандарт · ₸59,900', callback_data: 'b2b_pkg_std_own'  },
         ],
         [
-          { text: '🟣 Бизнес · ₸49,900',   callback_data: 'b2b_pkg_biz_own'  },
-          { text: '⭐ Сеть · ₸69,900',     callback_data: 'b2b_pkg_net_own'  },
+          { text: '🟣 Бизнес · ₸79,900',   callback_data: 'b2b_pkg_biz_own'  },
+          { text: '⭐ Сеть · ₸99,900',     callback_data: 'b2b_pkg_net_own'  },
         ],
       ]}
     );

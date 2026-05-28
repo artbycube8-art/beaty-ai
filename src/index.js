@@ -523,7 +523,475 @@ const OFERTA_HTML = `<!DOCTYPE html>
 </html>
 `;
 
-// ─── Admin Dashboard ─────────────────────────────────────────────────────────
+// ─── Dashboard API handler ────────────────────────────────────────────────────
+async function handleDashboardApi(url, request, env) {
+  const db   = env.beauty_ai_db;
+  const json = (data, status = 200) => new Response(JSON.stringify(data), {
+    status, headers: { 'Content-Type': 'application/json' },
+  });
+
+  // GET /api/stats
+  if (url.pathname === '/api/stats') {
+    const [active, trial, total, clients, gens] = await Promise.all([
+      db.prepare(`SELECT COUNT(*) c FROM salons WHERE status IN ('standard_active','premium_active')`).first(),
+      db.prepare(`SELECT COUNT(*) c FROM salons WHERE status='trial'`).first(),
+      db.prepare(`SELECT COUNT(*) c FROM salons`).first(),
+      db.prepare(`SELECT COUNT(*) c FROM users`).first(),
+      db.prepare(`SELECT COALESCE(SUM(monthly_generations_count),0) c FROM salons`).first(),
+    ]);
+    const PRICES = {'Мини':14900,'Стандарт':24900,'Бизнес':39900,'Сеть':69900,'Старт':14900,'Базовый':24900,'Про':39900,'Макс':59900};
+    const { results: sal } = await db.prepare(`SELECT plan_name, status FROM salons WHERE status IN ('standard_active','premium_active')`).all();
+    const revenue = sal.reduce((s, r) => s + (PRICES[r.plan_name] ?? 0), 0);
+    return json({ active: active.c, trial: trial.c, total: total.c, clients: clients.c, gens: gens.c, revenue });
+  }
+
+  // GET /api/salons?status=active|trial|all
+  if (url.pathname === '/api/salons') {
+    const status = url.searchParams.get('status') ?? 'active';
+    const where  = status === 'trial' ? `WHERE s.status='trial'`
+      : status === 'active' ? `WHERE s.status IN ('standard_active','premium_active')`
+      : '';
+    const { results } = await db.prepare(`
+      SELECT s.id, s.name, s.salon_name, s.salon_type, s.status, s.plan_name,
+             s.monthly_generations_count, s.max_allowed_generations, s.plan_limit,
+             s.paid_until, s.whatsapp_phone, s.source_track, s.bot_token, s.slug,
+             s.admin_chat_id, s.created_at,
+             (SELECT COUNT(*) FROM users u WHERE u.bot_token = s.bot_token) client_count
+      FROM salons s ${where} ORDER BY s.created_at DESC LIMIT 300`).all();
+    return json(results);
+  }
+
+  // GET /api/pending
+  if (url.pathname === '/api/pending') {
+    const { results } = await db.prepare(`
+      SELECT us.user_id, us.temp_data, us.updated_at,
+             s.name, s.salon_name, s.whatsapp_phone
+      FROM user_states us
+      LEFT JOIN salons s ON s.admin_chat_id = us.user_id
+      WHERE us.state = 'b2b_awaiting_cheque'
+      ORDER BY us.updated_at DESC LIMIT 50`).all();
+    return json(results.map(r => ({ ...r, temp_data: JSON.parse(r.temp_data ?? '{}') })));
+  }
+
+  // GET /api/clients
+  if (url.pathname === '/api/clients') {
+    const { results } = await db.prepare(`
+      SELECT u.user_id, u.name, u.phone, u.image_count, u.created_at,
+             s.name sname, s.salon_name, s.salon_type
+      FROM users u
+      LEFT JOIN salons s ON s.bot_token = u.bot_token
+      ORDER BY u.created_at DESC LIMIT 100`).all();
+    return json(results);
+  }
+
+  // POST /api/action
+  if (url.pathname === '/api/action' && request.method === 'POST') {
+    const body = await request.json().catch(() => ({}));
+    const { action } = body;
+
+    if (action === 'delete_salon') {
+      const { botToken } = body;
+      if (!botToken) return json({ error: 'no botToken' }, 400);
+      await db.prepare('DELETE FROM users WHERE bot_token = ?').bind(botToken).run();
+      await db.prepare('DELETE FROM user_states WHERE bot_token = ?').bind(botToken).run();
+      await db.prepare('DELETE FROM pending_jobs WHERE bot_token = ?').bind(botToken).run();
+      await db.prepare('DELETE FROM salons WHERE bot_token = ?').bind(botToken).run();
+      return json({ ok: true });
+    }
+
+    if (action === 'delete_all_trials') {
+      const { results: trials } = await db.prepare(`SELECT bot_token FROM salons WHERE status='trial'`).all();
+      for (const t of trials) {
+        await db.prepare('DELETE FROM users WHERE bot_token = ?').bind(t.bot_token).run();
+        await db.prepare('DELETE FROM user_states WHERE bot_token = ?').bind(t.bot_token).run();
+        await db.prepare('DELETE FROM salons WHERE bot_token = ?').bind(t.bot_token).run();
+      }
+      return json({ ok: true, deleted: trials.length });
+    }
+
+    if (action === 'approve_payment') {
+      const { userId } = body;
+      await confirmB2bPayment(env, String(env.ADMIN_USER_ID), `pok:${userId}:${body.pkgKey ?? ''}`);
+      return json({ ok: true });
+    }
+
+    if (action === 'reject_payment') {
+      const { userId } = body;
+      await rejectB2bPayment(env, String(env.ADMIN_USER_ID), `pno:${userId}`);
+      return json({ ok: true });
+    }
+
+    if (action === 'unlink_owner') {
+      const { botToken } = body;
+      await db.prepare(`UPDATE salons SET admin_chat_id='0' WHERE bot_token=?`).bind(botToken).run();
+      await db.prepare(`DELETE FROM user_states WHERE user_id=(SELECT admin_chat_id FROM salons WHERE bot_token=?) AND bot_token=?`).bind(botToken, botToken).run();
+      return json({ ok: true });
+    }
+
+    return json({ error: 'unknown action' }, 400);
+  }
+
+  return json({ error: 'not found' }, 404);
+}
+
+// ─── Admin Dashboard HTML (SPA) ───────────────────────────────────────────────
+function buildDashboardHTML(key, env) {
+  const workerUrl = (env?.WORKER_URL ?? 'https://beauty-ai-saas.artbycube8.workers.dev').replace(/\/$/, '');
+  return `<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Beauty AI — Dashboard</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0f2f5;color:#1a1a1a;font-size:14px}
+.topbar{background:#7c3aed;color:#fff;padding:14px 20px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,.2)}
+.topbar h1{font-size:16px;font-weight:700;flex:1}
+.topbar small{font-size:11px;opacity:.7}
+.tabs{display:flex;gap:2px;background:#fff;border-bottom:2px solid #e5e7eb;padding:0 20px;overflow-x:auto}
+.tab{padding:12px 18px;cursor:pointer;font-size:13px;font-weight:600;color:#888;border-bottom:2px solid transparent;margin-bottom:-2px;white-space:nowrap}
+.tab.active{color:#7c3aed;border-bottom-color:#7c3aed}
+.tab:hover:not(.active){color:#555}
+.page{display:none;padding:20px;max-width:1300px;margin:0 auto}
+.page.active{display:block}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:20px}
+.card{background:#fff;border-radius:12px;padding:16px;box-shadow:0 1px 5px rgba(0,0,0,.07)}
+.card .lbl{font-size:11px;color:#999;margin-bottom:4px}
+.card .val{font-size:24px;font-weight:800}
+.card .sub{font-size:10px;color:#bbb;margin-top:2px}
+.card.purple .val{color:#7c3aed}.card.green .val{color:#10b981}
+.section{background:#fff;border-radius:12px;box-shadow:0 1px 5px rgba(0,0,0,.07);overflow:hidden;margin-bottom:16px}
+.sec-head{padding:12px 16px;border-bottom:1px solid #f3f4f6;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.sec-head input{border:1px solid #e5e7eb;border-radius:8px;padding:6px 10px;font-size:13px;outline:none;width:200px}
+.sec-head input:focus{border-color:#7c3aed}
+.btn{display:inline-flex;align-items:center;gap:5px;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;border:none;transition:.15s}
+.btn-red{background:#fee2e2;color:#dc2626}.btn-red:hover{background:#fecaca}
+.btn-green{background:#d1fae5;color:#065f46}.btn-green:hover{background:#a7f3d0}
+.btn-blue{background:#dbeafe;color:#1d4ed8}.btn-blue:hover{background:#bfdbfe}
+.btn-gray{background:#f3f4f6;color:#6b7280}.btn-gray:hover{background:#e5e7eb}
+.btn-purple{background:#ede9fe;color:#6d28d9}.btn-purple:hover{background:#ddd6fe}
+table{width:100%;border-collapse:collapse}
+th{padding:9px 12px;text-align:left;font-size:11px;color:#999;font-weight:600;border-bottom:1px solid #f3f4f6;white-space:nowrap;background:#fafafa}
+td{padding:9px 12px;border-bottom:1px solid #f9fafb;vertical-align:middle;font-size:13px}
+tr:last-child td{border:none}tr:hover td{background:#fafafa}
+.badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:700}
+.g{background:#d1fae5;color:#065f46}.y{background:#fef3c7;color:#92400e}.gr{background:#f3f4f6;color:#9ca3af}.r{background:#fee2e2;color:#dc2626}
+.bar-w{background:#f3f4f6;border-radius:99px;height:5px;overflow:hidden;width:70px}
+.bar-f{height:100%;border-radius:99px}
+.num{color:#ddd;font-size:11px;width:28px}
+.actions{display:flex;gap:4px;flex-wrap:wrap}
+.loading{text-align:center;padding:40px;color:#aaa;font-size:13px}
+.toast{position:fixed;bottom:24px;right:24px;background:#1a1a1a;color:#fff;padding:10px 18px;border-radius:10px;font-size:13px;z-index:999;display:none}
+.pending-card{background:#fff;border-radius:12px;padding:16px;box-shadow:0 1px 5px rgba(0,0,0,.07);margin-bottom:10px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.pending-info{flex:1}
+.pending-info b{font-size:15px}
+.pending-meta{color:#888;font-size:12px;margin-top:4px;line-height:1.6}
+.wa-link{color:#25d366;text-decoration:none;font-weight:600}
+@media(max-width:600px){.cards{grid-template-columns:repeat(2,1fr)}.sec-head input{width:140px}td.hide{display:none}th.hide{display:none}}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>✨ Beauty AI Dashboard</h1>
+  <small id="lastUpdate"></small>
+</div>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('overview')">📊 Обзор</div>
+  <div class="tab" onclick="switchTab('pending')">🧾 Чеки <span id="pendingBadge"></span></div>
+  <div class="tab" onclick="switchTab('active')">✅ Активные</div>
+  <div class="tab" onclick="switchTab('trials')">🧪 Триалы</div>
+  <div class="tab" onclick="switchTab('clients')">👥 Клиенты</div>
+</div>
+
+<!-- OVERVIEW -->
+<div id="tab-overview" class="page active">
+  <div class="cards" id="statsCards"><div class="loading">Загрузка...</div></div>
+</div>
+
+<!-- PENDING PAYMENTS -->
+<div id="tab-pending" class="page">
+  <div id="pendingList"><div class="loading">Загрузка...</div></div>
+</div>
+
+<!-- ACTIVE SALONS -->
+<div id="tab-active" class="page">
+  <div class="section">
+    <div class="sec-head">
+      <span id="activeTitle">Активные салоны</span>
+      <input id="activeSearch" placeholder="🔍 Поиск по названию..." oninput="filterTable('activeTable',this.value)">
+    </div>
+    <div style="overflow-x:auto">
+    <table id="activeTable">
+      <thead><tr>
+        <th class="num">#</th><th></th><th>Название</th><th>Тариф</th>
+        <th>Клиентов</th><th class="hide">Генерации</th><th>Оплачен до</th><th>Действия</th>
+      </tr></thead>
+      <tbody id="activeBody"><tr><td colspan="8" class="loading">Загрузка...</td></tr></tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
+<!-- TRIALS -->
+<div id="tab-trials" class="page">
+  <div class="section">
+    <div class="sec-head">
+      <span id="trialsTitle">Триалы</span>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input id="trialsSearch" placeholder="🔍 Поиск..." oninput="filterTable('trialsTable',this.value)">
+        <button class="btn btn-red" onclick="deleteAllTrials()">🗑 Удалить все триалы</button>
+      </div>
+    </div>
+    <div style="overflow-x:auto">
+    <table id="trialsTable">
+      <thead><tr>
+        <th class="num">#</th><th></th><th>Название</th><th>Телефон</th>
+        <th class="hide">Источник</th><th>Создан</th><th>Владелец</th><th>Действия</th>
+      </tr></thead>
+      <tbody id="trialsBody"><tr><td colspan="8" class="loading">Загрузка...</td></tr></tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
+<!-- CLIENTS -->
+<div id="tab-clients" class="page">
+  <div class="section">
+    <div class="sec-head">
+      <span id="clientsTitle">Клиенты</span>
+      <input id="clientsSearch" placeholder="🔍 Поиск по имени/телефону..." oninput="filterTable('clientsTable',this.value)">
+    </div>
+    <div style="overflow-x:auto">
+    <table id="clientsTable">
+      <thead><tr>
+        <th class="num">#</th><th>Имя</th><th>Телефон</th><th>Примерок</th><th class="hide">Салон</th><th>Дата</th>
+      </tr></thead>
+      <tbody id="clientsBody"><tr><td colspan="6" class="loading">Загрузка...</td></tr></tbody>
+    </table>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const KEY = '${key}';
+const API = '${workerUrl}/api';
+const BOT = '${env.STANDARD_BOT_USERNAME ?? 'qrbeatyai_bot'}';
+
+const TYPE = {barber:'✂️',makeup:'💄',nails:'💅'};
+const PLAN_C = {'Мини':'#10b981','Стандарт':'#3b82f6','Бизнес':'#8b5cf6','Сеть':'#f59e0b','Старт':'#10b981','Базовый':'#3b82f6','Про':'#8b5cf6','Макс':'#f59e0b'};
+
+let loaded = {};
+
+async function api(path, opts={}) {
+  const sep = path.includes('?') ? '&' : '?';
+  const r = await fetch(API + path + sep + 'key=' + KEY, opts);
+  return r.json();
+}
+
+function toast(msg, ms=2500) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.display='block';
+  setTimeout(() => t.style.display='none', ms);
+}
+
+function fmt(n) { return Number(n||0).toLocaleString('ru'); }
+function fmtDate(d) { return d ? d.slice(0,10) : '—'; }
+
+// ─── TABS ────────────────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  const tabs = ['overview','pending','active','trials','clients'];
+  document.querySelectorAll('.tab')[tabs.indexOf(name)].classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+  if (!loaded[name]) { loaded[name]=true; loadTab(name); }
+}
+
+function loadTab(name) {
+  if (name==='overview') loadStats();
+  if (name==='pending')  loadPending();
+  if (name==='active')   loadSalons('active');
+  if (name==='trials')   loadSalons('trial');
+  if (name==='clients')  loadClients();
+}
+
+// ─── STATS ───────────────────────────────────────────────────────────────────
+async function loadStats() {
+  const s = await api('/stats');
+  document.getElementById('lastUpdate').textContent = 'Обновлено: ' + new Date().toLocaleTimeString('ru');
+  document.getElementById('statsCards').innerHTML = \`
+    <div class="card green"><div class="lbl">Активных</div><div class="val">\${s.active}</div><div class="sub">платная подписка</div></div>
+    <div class="card"><div class="lbl">Триалов</div><div class="val">\${s.trial}</div><div class="sub">не оплатили ещё</div></div>
+    <div class="card"><div class="lbl">Всего салонов</div><div class="val">\${s.total}</div><div class="sub">в базе</div></div>
+    <div class="card"><div class="lbl">Клиентов</div><div class="val">\${fmt(s.clients)}</div><div class="sub">уникальных</div></div>
+    <div class="card"><div class="lbl">Генераций/мес</div><div class="val">\${fmt(s.gens)}</div><div class="sub">текущий месяц</div></div>
+    <div class="card purple"><div class="lbl">Выручка/мес</div><div class="val">₸\${fmt(s.revenue)}</div><div class="sub">~$\${Math.round(s.revenue/520)}</div></div>
+  \`;
+}
+
+// ─── PENDING PAYMENTS ────────────────────────────────────────────────────────
+async function loadPending() {
+  const list = await api('/pending');
+  const badge = document.getElementById('pendingBadge');
+  badge.textContent = list.length > 0 ? ' (' + list.length + ')' : '';
+  const el = document.getElementById('pendingList');
+  if (!list.length) { el.innerHTML = '<div class="loading">Нет ожидающих оплат ✅</div>'; return; }
+  el.innerHTML = list.map(p => {
+    const pkg  = p.temp_data?.selected_pkg ?? p.temp_data?.pkg_key ?? '—';
+    const phone = p.temp_data?.kaspi_phone ?? '—';
+    const sname = p.name || p.salon_name || '—';
+    const wa   = p.whatsapp_phone ? \`<a class="wa-link" href="https://wa.me/\${p.whatsapp_phone.replace(/\\D/g,'')}">💬 WhatsApp</a>\` : '';
+    return \`<div class="pending-card" id="pc_\${p.user_id}">
+      <div class="pending-info">
+        <b>\${sname}</b>
+        <div class="pending-meta">
+          👤 ID: \${p.user_id}<br>
+          📦 Пакет: <b>\${pkg}</b><br>
+          💳 Kaspi: \${phone}<br>
+          🕐 \${fmtDate(p.updated_at)}<br>
+          \${wa}
+        </div>
+      </div>
+      <div class="actions" style="flex-direction:column">
+        <button class="btn btn-green" onclick="approvePayment('\${p.user_id}','\${pkg}')">✅ Подтвердить</button>
+        <button class="btn btn-red"   onclick="rejectPayment('\${p.user_id}')">❌ Отклонить</button>
+      </div>
+    </div>\`;
+  }).join('');
+}
+
+async function approvePayment(userId, pkgKey) {
+  if (!confirm('Подтвердить оплату для ' + userId + '?')) return;
+  const r = await api('/action', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'approve_payment', userId, pkgKey}) });
+  if (r.ok) { toast('✅ Оплата подтверждена'); document.getElementById('pc_'+userId)?.remove(); }
+  else toast('❌ Ошибка: ' + (r.error||''));
+}
+
+async function rejectPayment(userId) {
+  if (!confirm('Отклонить оплату для ' + userId + '?')) return;
+  const r = await api('/action', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'reject_payment', userId}) });
+  if (r.ok) { toast('❌ Оплата отклонена'); document.getElementById('pc_'+userId)?.remove(); }
+  else toast('❌ Ошибка: ' + (r.error||''));
+}
+
+// ─── SALONS ──────────────────────────────────────────────────────────────────
+async function loadSalons(status) {
+  const salons = await api('/salons?status=' + status);
+  const isT = status === 'trial';
+  const today = new Date().toISOString().slice(0,10);
+
+  if (isT) {
+    document.getElementById('trialsTitle').textContent = 'Триалы (' + salons.length + ')';
+    document.getElementById('trialsBody').innerHTML = salons.map((s,i) => {
+      const name  = s.name || s.salon_name || '—';
+      const owner = s.admin_chat_id && s.admin_chat_id !== '0' ? '✅ ' + s.admin_chat_id : '—';
+      const link  = s.slug ? \`https://t.me/\${BOT}?start=\${s.slug}\` : null;
+      return \`<tr id="row_\${btoa(s.bot_token).slice(0,8)}">
+        <td class="num">\${i+1}</td>
+        <td>\${TYPE[s.salon_type]??'❓'}</td>
+        <td>\${name}\${link ? \` <a href="\${link}" target="_blank" style="color:#7c3aed;font-size:11px">🔗</a>\` : ''}</td>
+        <td>\${s.whatsapp_phone||'—'}</td>
+        <td class="hide">\${s.source_track||'—'}</td>
+        <td>\${fmtDate(s.created_at)}</td>
+        <td>\${owner}</td>
+        <td><div class="actions">
+          \${s.admin_chat_id && s.admin_chat_id !== '0' ? \`<button class="btn btn-gray" onclick="unlinkOwner('\${s.bot_token}',this)">🔓 Отвязать</button>\` : ''}
+          <button class="btn btn-red" onclick="deleteSalon('\${s.bot_token}',this)">🗑 Удалить</button>
+        </div></td>
+      </tr>\`;
+    }).join('') || '<tr><td colspan="8" class="loading">Нет триалов</td></tr>';
+  } else {
+    document.getElementById('activeTitle').textContent = 'Активные салоны (' + salons.length + ')';
+    document.getElementById('activeBody').innerHTML = salons.map((s,i) => {
+      const name  = s.name || s.salon_name || '—';
+      const used  = s.monthly_generations_count ?? 0;
+      const limit = s.max_allowed_generations ?? s.plan_limit ?? 0;
+      const pct   = limit > 0 ? Math.min(100,Math.round(used/limit*100)) : 0;
+      const bc    = pct>=90?'#ef4444':pct>=60?'#f59e0b':'#10b981';
+      const paidCls = s.paid_until && s.paid_until < today ? 'r' : '';
+      const planC = PLAN_C[s.plan_name] ?? '#888';
+      const wa    = s.whatsapp_phone ? \`<a href="https://wa.me/\${s.whatsapp_phone.replace(/\\D/g,'')}" target="_blank" class="btn btn-green">💬</a>\` : '';
+      return \`<tr id="row_\${btoa(s.bot_token).slice(0,8)}">
+        <td class="num">\${i+1}</td>
+        <td>\${TYPE[s.salon_type]??'❓'}</td>
+        <td style="font-weight:600">\${name}</td>
+        <td><span style="color:\${planC};font-weight:700">\${s.plan_name??'—'}</span></td>
+        <td>\${s.client_count??0}</td>
+        <td class="hide">
+          <div class="bar-w"><div class="bar-f" style="width:\${pct}%;background:\${bc}"></div></div>
+          <div style="font-size:11px;color:#aaa">\${used}/\${limit}</div>
+        </td>
+        <td class="\${paidCls}">\${fmtDate(s.paid_until)}</td>
+        <td><div class="actions">
+          \${wa}
+          <button class="btn btn-gray" onclick="unlinkOwner('\${s.bot_token}',this)">🔓</button>
+          <button class="btn btn-red" onclick="deleteSalon('\${s.bot_token}',this)">🗑</button>
+        </div></td>
+      </tr>\`;
+    }).join('') || '<tr><td colspan="8" class="loading">Нет активных салонов</td></tr>';
+  }
+}
+
+async function deleteSalon(botToken, btn) {
+  if (!confirm('Удалить салон? Это действие необратимо.')) return;
+  btn.textContent = '...'; btn.disabled = true;
+  const r = await api('/action', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'delete_salon', botToken}) });
+  if (r.ok) { toast('🗑 Салон удалён'); btn.closest('tr')?.remove(); }
+  else { toast('❌ Ошибка'); btn.textContent='🗑'; btn.disabled=false; }
+}
+
+async function unlinkOwner(botToken, btn) {
+  if (!confirm('Отвязать владельца от этого бота?')) return;
+  btn.textContent = '...'; btn.disabled = true;
+  const r = await api('/action', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'unlink_owner', botToken}) });
+  if (r.ok) { toast('🔓 Владелец отвязан'); btn.textContent='🔓'; btn.disabled=false; }
+  else { toast('❌ Ошибка'); btn.textContent='🔓'; btn.disabled=false; }
+}
+
+async function deleteAllTrials() {
+  if (!confirm('Удалить ВСЕ триалы? Это действие необратимо.')) return;
+  const r = await api('/action', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({action:'delete_all_trials'}) });
+  if (r.ok) { toast('🗑 Удалено ' + r.deleted + ' триалов'); loaded.trials=false; loadSalons('trial'); }
+  else toast('❌ Ошибка');
+}
+
+// ─── CLIENTS ─────────────────────────────────────────────────────────────────
+async function loadClients() {
+  const clients = await api('/clients');
+  document.getElementById('clientsTitle').textContent = 'Клиенты (' + clients.length + ')';
+  document.getElementById('clientsBody').innerHTML = clients.map((c,i) => \`<tr>
+    <td class="num">\${i+1}</td>
+    <td>\${c.name||'—'}</td>
+    <td>\${c.phone ? \`<a href="https://wa.me/\${c.phone.replace(/\\D/g,'')}" target="_blank" style="color:#25d366">\${c.phone}</a>\` : '—'}</td>
+    <td>\${c.image_count??0}</td>
+    <td class="hide">\${c.sname||c.salon_name||'—'}</td>
+    <td>\${fmtDate(c.created_at)}</td>
+  </tr>\`).join('') || '<tr><td colspan="6" class="loading">Нет клиентов</td></tr>';
+}
+
+// ─── SEARCH ──────────────────────────────────────────────────────────────────
+function filterTable(tableId, query) {
+  const q = query.toLowerCase();
+  document.querySelectorAll('#' + tableId + ' tbody tr').forEach(tr => {
+    tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+}
+
+// ─── INIT ────────────────────────────────────────────────────────────────────
+loadTab('overview');
+// Auto-check pending payments
+api('/pending').then(list => {
+  if (list.length > 0) document.getElementById('pendingBadge').textContent = ' (' + list.length + ')';
+});
+</script>
+</body>
+</html>`;
+}
+
+// ─── Admin Dashboard (old, kept for reference) ────────────────────────────────
 async function buildDashboard(env) {
   const db = env.beauty_ai_db;
 
@@ -701,16 +1169,18 @@ export default {
       });
     }
 
-    // ── Admin dashboard (GET /dashboard?key=ADMIN_USER_ID) ──
+    // ── Admin dashboard ──
     if (request.method === 'GET' && url.pathname === '/dashboard') {
       const key = url.searchParams.get('key');
-      const adminIds = getPrimaryAdminIds(env);
-      if (!key || !adminIds.includes(key)) {
-        return new Response('403 Forbidden', { status: 403 });
-      }
-      return new Response(await buildDashboard(env), {
-        headers: { 'Content-Type': 'text/html; charset=utf-8' },
-      });
+      if (!key || !getPrimaryAdminIds(env).includes(key)) return new Response('403 Forbidden', { status: 403 });
+      return new Response(buildDashboardHTML(key, env), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+    }
+
+    // ── Dashboard API ──
+    if (url.pathname.startsWith('/api/')) {
+      const key = url.searchParams.get('key');
+      if (!key || !getPrimaryAdminIds(env).includes(key)) return new Response('{"error":"forbidden"}', { status: 403 });
+      return handleDashboardApi(url, request, env);
     }
 
     if (request.method !== 'POST') {

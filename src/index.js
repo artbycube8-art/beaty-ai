@@ -546,20 +546,27 @@ async function handleDashboardApi(url, request, env) {
     return json({ active: active.c, trial: trial.c, total: total.c, clients: clients.c, gens: gens.c, revenue, convRate });
   }
 
-  // GET /api/salons?status=active|trial|all
+  // GET /api/salons?status=active|trial|all&page=1
   if (url.pathname === '/api/salons') {
     const status = url.searchParams.get('status') ?? 'active';
+    const page   = Math.max(1, parseInt(url.searchParams.get('page') ?? '1'));
+    const limit  = 100;
+    const offset = (page - 1) * limit;
     const where  = status === 'trial' ? `WHERE s.status='trial'`
       : status === 'active' ? `WHERE s.status IN ('standard_active','premium_active')`
       : '';
-    const { results } = await db.prepare(`
-      SELECT s.id, s.name, s.salon_name, s.salon_type, s.status, s.plan_name,
-             s.monthly_generations_count, s.max_allowed_generations, s.plan_limit,
-             s.paid_until, s.whatsapp_phone, s.source_track, s.bot_token, s.slug,
-             s.admin_chat_id, s.created_at,
-             (SELECT COUNT(*) FROM users u WHERE u.bot_token = s.bot_token) client_count
-      FROM salons s ${where} ORDER BY s.created_at DESC LIMIT 300`).all();
-    return json(results);
+    const [countRow, { results }] = await Promise.all([
+      db.prepare(`SELECT COUNT(*) c FROM salons s ${where}`).first(),
+      db.prepare(`
+        SELECT s.id, s.name, s.salon_name, s.salon_type, s.status, s.plan_name,
+               s.monthly_generations_count, s.max_allowed_generations, s.plan_limit,
+               s.paid_until, s.whatsapp_phone, s.source_track, s.bot_token, s.slug,
+               s.admin_chat_id, s.created_at,
+               (SELECT COUNT(*) FROM users u WHERE u.bot_token = s.bot_token) client_count
+        FROM salons s ${where} ORDER BY s.created_at DESC LIMIT ${limit} OFFSET ${offset}`).all(),
+    ]);
+    const total = countRow?.c ?? 0;
+    return json({ results, total, page, pages: Math.ceil(total / limit) || 1 });
   }
 
   // GET /api/pending
@@ -734,6 +741,10 @@ tr:last-child td{border:none}tr:hover td{background:#fafafa}
 .event-time{font-size:11px;color:#bbb;white-space:nowrap}
 @media(max-width:700px){.charts-row{grid-template-columns:1fr}}
 @media(max-width:600px){.cards{grid-template-columns:repeat(2,1fr)}.sec-head input{width:140px}td.hide{display:none}th.hide{display:none}}
+tr.contacted td{background:#f0fdf4!important}
+tr.contacted .sent-mark{color:#10b981;font-weight:700;font-size:11px}
+.pager{display:flex;align-items:center;gap:10px;padding:10px 16px;border-top:1px solid #f3f4f6;font-size:13px;color:#888;flex-wrap:wrap}
+.pager button{padding:5px 12px}
 </style>
 </head>
 <body>
@@ -797,6 +808,7 @@ tr:last-child td{border:none}tr:hover td{background:#fafafa}
       <tbody id="activeBody"><tr><td colspan="8" class="loading">Загрузка...</td></tr></tbody>
     </table>
     </div>
+    <div class="pager" id="activePager"></div>
   </div>
 </div>
 
@@ -820,6 +832,7 @@ tr:last-child td{border:none}tr:hover td{background:#fafafa}
       <tbody id="trialsBody"><tr><td colspan="8" class="loading">Загрузка...</td></tr></tbody>
     </table>
     </div>
+    <div class="pager" id="trialsPager"></div>
   </div>
 </div>
 
@@ -858,6 +871,46 @@ let loaded = {};
 let salonData = { active: [], trial: [] };
 let clientData = [];
 let regChart, statusChart;
+
+const TRIAL_SCRIPTS = [
+  'Здравствуйте! Вы зарегистрировали бота Beauty AI. Ваши клиенты уже могут примерять образы прямо на свои фото. Хотите продолжить после триала? Пишите — расскажем о тарифах.',
+  'Добрый день! Как вам бот Beauty AI? Удалось ли показать клиентам виртуальную примерку? Если есть вопросы или хотите продолжить — пишите, поможем.',
+  'Здравствуйте! Ваш бот Beauty AI готов к работе. Поделитесь ссылкой с клиентами — пусть попробуют примерить образ. Если нужна помощь с запуском — обращайтесь.',
+];
+
+function trialWaScript(phone) {
+  const n = phone.replace(/\D/g,'').split('').reduce((a,c) => a + c.charCodeAt(0), 0);
+  return TRIAL_SCRIPTS[n % TRIAL_SCRIPTS.length];
+}
+
+function waContacted(phone) {
+  if (!phone) return false;
+  const c = JSON.parse(localStorage.getItem('wa_sent') || '{}');
+  return !!c[phone.replace(/\D/g,'')];
+}
+
+function sendTrialWa(phone, rowKey) {
+  const clean = phone.replace(/\D/g,'');
+  window.open('https://wa.me/' + clean + '?text=' + encodeURIComponent(trialWaScript(clean)), '_blank');
+  const c = JSON.parse(localStorage.getItem('wa_sent') || '{}');
+  c[clean] = new Date().toISOString().slice(0,10);
+  localStorage.setItem('wa_sent', JSON.stringify(c));
+  const row = document.getElementById('row_' + rowKey);
+  if (row) { row.classList.add('contacted'); const m = row.querySelector('.sent-mark'); if (m) m.textContent = '✓ отправлено'; }
+  toast('💬 WhatsApp открыт');
+}
+
+function renderPager(status, page, pages) {
+  const id = status === 'active' ? 'activePager' : 'trialsPager';
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (!pages || pages <= 1) { el.innerHTML = ''; return; }
+  const st = JSON.stringify(status);
+  el.innerHTML =
+    (page > 1 ? '<button class="btn btn-gray" onclick="loadSalons(' + st + ',' + (page-1) + ')">← Пред</button>' : '<span></span>') +
+    '<span>Страница <b>' + page + '</b> из ' + pages + '</span>' +
+    (page < pages ? '<button class="btn btn-gray" onclick="loadSalons(' + st + ',' + (page+1) + ')">Далее →</button>' : '');
+}
 
 async function api(path, opts={}) {
   const sep = path.includes('?') ? '&' : '?';
@@ -1018,35 +1071,41 @@ async function rejectPayment(userId) {
   else toast('❌ Ошибка: ' + (r.error||''));
 }
 
-async function loadSalons(status) {
-  const salons = await api('/salons?status=' + status);
+async function loadSalons(status, page=1) {
+  const resp = await api('/salons?status=' + status + '&page=' + page);
+  const salons = resp.results ?? resp;
   if (status === 'active') salonData.active = salons;
   else if (status === 'trial') salonData.trial = salons;
   const isT = status === 'trial';
   const today = new Date().toISOString().slice(0,10);
+  const offset = ((resp.page ?? 1) - 1) * 100;
 
   if (isT) {
-    document.getElementById('trialsTitle').textContent = 'Триалы (' + salons.length + ')';
+    document.getElementById('trialsTitle').textContent = 'Триалы (' + (resp.total ?? salons.length) + ')';
     document.getElementById('trialsBody').innerHTML = salons.map((s,i) => {
-      const name  = s.name || s.salon_name || '—';
-      const owner = s.admin_chat_id && s.admin_chat_id !== '0' ? '✅ ' + s.admin_chat_id : '—';
-      const link  = s.slug ? \`https://t.me/\${BOT}?start=\${s.slug}\` : null;
-      return \`<tr id="row_\${btoa(s.bot_token).slice(0,8)}">
-        <td class="num">\${i+1}</td>
+      const name    = s.name || s.salon_name || '—';
+      const owner   = s.admin_chat_id && s.admin_chat_id !== '0' ? '✅ ' + s.admin_chat_id : '—';
+      const link    = s.slug ? \`https://t.me/\${BOT}?start=\${s.slug}\` : null;
+      const rowKey  = btoa(s.bot_token).slice(0,8);
+      const ctacted = s.whatsapp_phone ? waContacted(s.whatsapp_phone) : false;
+      return \`<tr id="row_\${rowKey}"\${ctacted?' class="contacted"':''}>
+        <td class="num">\${offset+i+1}</td>
         <td>\${TYPE[s.salon_type]??'❓'}</td>
         <td>\${name}\${link ? \` <a href="\${link}" target="_blank" style="color:#7c3aed;font-size:11px">🔗</a>\` : ''}</td>
-        <td>\${s.whatsapp_phone||'—'}</td>
+        <td>\${s.whatsapp_phone ? \`<span>\${s.whatsapp_phone}</span>\` : '—'}</td>
         <td class="hide">\${s.source_track||'—'}</td>
         <td>\${fmtDate(s.created_at)}</td>
         <td>\${owner}</td>
         <td><div class="actions">
+          \${s.whatsapp_phone ? \`<button class="btn btn-green" onclick="sendTrialWa('\${s.whatsapp_phone}','\${rowKey}')" title="Написать в WA с готовым скриптом">📤\${ctacted?'<span class=\\"sent-mark\\"> ✓</span>':''}</button>\` : ''}
           \${s.admin_chat_id && s.admin_chat_id !== '0' ? \`<button class="btn btn-gray" onclick="unlinkOwner('\${s.bot_token}',this)">🔓</button>\` : ''}
           <button class="btn btn-red" onclick="deleteSalon('\${s.bot_token}',this)">🗑</button>
         </div></td>
       </tr>\`;
     }).join('') || '<tr><td colspan="8" class="loading">Нет триалов</td></tr>';
+    renderPager('trial', resp.page, resp.pages);
   } else {
-    document.getElementById('activeTitle').textContent = 'Активные салоны (' + salons.length + ')';
+    document.getElementById('activeTitle').textContent = 'Активные салоны (' + (resp.total ?? salons.length) + ')';
     document.getElementById('activeBody').innerHTML = salons.map((s,i) => {
       const name  = s.name || s.salon_name || '—';
       const used  = s.monthly_generations_count ?? 0;
@@ -1057,7 +1116,7 @@ async function loadSalons(status) {
       const planC = PLAN_C[s.plan_name] ?? '#888';
       const wa    = s.whatsapp_phone ? \`<a href="https://wa.me/\${s.whatsapp_phone.replace(/\\D/g,'')}" target="_blank" class="btn btn-green">💬</a>\` : '';
       return \`<tr id="row_\${btoa(s.bot_token).slice(0,8)}">
-        <td class="num">\${i+1}</td>
+        <td class="num">\${offset+i+1}</td>
         <td>\${TYPE[s.salon_type]??'❓'}</td>
         <td style="font-weight:600">\${name}</td>
         <td><span style="color:\${planC};font-weight:700">\${s.plan_name??'—'}</span></td>
@@ -1074,6 +1133,7 @@ async function loadSalons(status) {
         </div></td>
       </tr>\`;
     }).join('') || '<tr><td colspan="8" class="loading">Нет активных салонов</td></tr>';
+    renderPager('active', resp.page, resp.pages);
   }
 }
 

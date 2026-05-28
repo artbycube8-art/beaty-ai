@@ -542,7 +542,8 @@ async function handleDashboardApi(url, request, env) {
     const PRICES = {'Мини':14900,'Стандарт':24900,'Бизнес':39900,'Сеть':69900,'Старт':14900,'Базовый':24900,'Про':39900,'Макс':59900};
     const { results: sal } = await db.prepare(`SELECT plan_name, status FROM salons WHERE status IN ('standard_active','premium_active')`).all();
     const revenue = sal.reduce((s, r) => s + (PRICES[r.plan_name] ?? 0), 0);
-    return json({ active: active.c, trial: trial.c, total: total.c, clients: clients.c, gens: gens.c, revenue });
+    const convRate = (active.c + trial.c) > 0 ? Math.round(active.c / (active.c + trial.c) * 100) : 0;
+    return json({ active: active.c, trial: trial.c, total: total.c, clients: clients.c, gens: gens.c, revenue, convRate });
   }
 
   // GET /api/salons?status=active|trial|all
@@ -581,6 +582,38 @@ async function handleDashboardApi(url, request, env) {
       FROM users u
       LEFT JOIN salons s ON s.bot_token = u.bot_token
       ORDER BY u.created_at DESC LIMIT 100`).all();
+    return json(results);
+  }
+
+  // GET /api/chart
+  if (url.pathname === '/api/chart') {
+    const [regs, statuses] = await Promise.all([
+      db.prepare(`SELECT date(created_at) as day, COUNT(*) as cnt FROM salons WHERE created_at >= datetime('now', '-14 days') GROUP BY day ORDER BY day`).all(),
+      db.prepare(`SELECT status, COUNT(*) as cnt FROM salons GROUP BY status`).all(),
+    ]);
+    return json({ registrations: regs.results, statuses: statuses.results });
+  }
+
+  // GET /api/expiring
+  if (url.pathname === '/api/expiring') {
+    const { results } = await db.prepare(`
+      SELECT s.name, s.salon_name, s.salon_type, s.plan_name, s.paid_until,
+             s.whatsapp_phone, s.admin_chat_id,
+             (SELECT COUNT(*) FROM users u WHERE u.bot_token = s.bot_token) client_count
+      FROM salons s
+      WHERE s.status IN ('standard_active','premium_active')
+      AND s.paid_until BETWEEN date('now') AND date('now', '+7 days')
+      ORDER BY s.paid_until ASC LIMIT 50
+    `).all();
+    return json(results);
+  }
+
+  // GET /api/events
+  if (url.pathname === '/api/events') {
+    const { results } = await db.prepare(`
+      SELECT name, salon_name, salon_type, status, plan_name, created_at, source_track
+      FROM salons ORDER BY created_at DESC LIMIT 10
+    `).all();
     return json(results);
   }
 
@@ -642,6 +675,7 @@ function buildDashboardHTML(key, env) {
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Beauty AI — Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"><\/script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0f2f5;color:#1a1a1a;font-size:14px}
@@ -654,12 +688,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .tab:hover:not(.active){color:#555}
 .page{display:none;padding:20px;max-width:1300px;margin:0 auto}
 .page.active{display:block}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:20px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px}
 .card{background:#fff;border-radius:12px;padding:16px;box-shadow:0 1px 5px rgba(0,0,0,.07)}
 .card .lbl{font-size:11px;color:#999;margin-bottom:4px}
 .card .val{font-size:24px;font-weight:800}
 .card .sub{font-size:10px;color:#bbb;margin-top:2px}
-.card.purple .val{color:#7c3aed}.card.green .val{color:#10b981}
+.card.purple .val{color:#7c3aed}.card.green .val{color:#10b981}.card.blue .val{color:#3b82f6}.card.orange .val{color:#f59e0b}
+.charts-row{display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-bottom:16px}
+.chart-box{background:#fff;border-radius:12px;padding:16px;box-shadow:0 1px 5px rgba(0,0,0,.07)}
+.chart-box h3{font-size:13px;font-weight:700;color:#555;margin-bottom:12px}
 .section{background:#fff;border-radius:12px;box-shadow:0 1px 5px rgba(0,0,0,.07);overflow:hidden;margin-bottom:16px}
 .sec-head{padding:12px 16px;border-bottom:1px solid #f3f4f6;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
 .sec-head input{border:1px solid #e5e7eb;border-radius:8px;padding:6px 10px;font-size:13px;outline:none;width:200px}
@@ -683,10 +720,19 @@ tr:last-child td{border:none}tr:hover td{background:#fafafa}
 .loading{text-align:center;padding:40px;color:#aaa;font-size:13px}
 .toast{position:fixed;bottom:24px;right:24px;background:#1a1a1a;color:#fff;padding:10px 18px;border-radius:10px;font-size:13px;z-index:999;display:none}
 .pending-card{background:#fff;border-radius:12px;padding:16px;box-shadow:0 1px 5px rgba(0,0,0,.07);margin-bottom:10px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
-.pending-info{flex:1}
-.pending-info b{font-size:15px}
+.pending-info{flex:1}.pending-info b{font-size:15px}
 .pending-meta{color:#888;font-size:12px;margin-top:4px;line-height:1.6}
 .wa-link{color:#25d366;text-decoration:none;font-weight:600}
+.exp-warn{border-top:3px solid #f59e0b}
+.exp-warn .sec-head{background:#fffbeb;color:#92400e}
+.events-feed{padding:0}
+.event-item{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid #f9fafb}
+.event-item:last-child{border:none}
+.event-icon{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0}
+.event-icon.paid{background:#d1fae5}.event-icon.trial{background:#fef3c7}.event-icon.new{background:#ede9fe}
+.event-body{flex:1}.event-body .etitle{font-size:13px;font-weight:600}.event-body .esub{font-size:11px;color:#aaa}
+.event-time{font-size:11px;color:#bbb;white-space:nowrap}
+@media(max-width:700px){.charts-row{grid-template-columns:1fr}}
 @media(max-width:600px){.cards{grid-template-columns:repeat(2,1fr)}.sec-head input{width:140px}td.hide{display:none}th.hide{display:none}}
 </style>
 </head>
@@ -707,6 +753,24 @@ tr:last-child td{border:none}tr:hover td{background:#fafafa}
 <!-- OVERVIEW -->
 <div id="tab-overview" class="page active">
   <div class="cards" id="statsCards"><div class="loading">Загрузка...</div></div>
+  <div class="charts-row">
+    <div class="chart-box"><h3>📈 Регистрации за 14 дней</h3><canvas id="regChart" height="100"></canvas></div>
+    <div class="chart-box"><h3>🥧 Структура базы</h3><canvas id="statusChart" height="160"></canvas></div>
+  </div>
+  <div class="section exp-warn" id="expiringSection" style="display:none">
+    <div class="sec-head">
+      ⏰ Скоро истекает подписка
+      <span id="expiringCount" style="background:#f59e0b;color:#fff;border-radius:99px;padding:1px 8px;font-size:12px;margin-left:4px"></span>
+    </div>
+    <div style="overflow-x:auto"><table>
+      <thead><tr><th>Название</th><th>Осталось</th><th>До даты</th><th>Тариф</th><th>Клиентов</th><th>Контакт</th></tr></thead>
+      <tbody id="expiringBody"></tbody>
+    </table></div>
+  </div>
+  <div class="section">
+    <div class="sec-head">🔔 Последние события</div>
+    <div id="eventsFeed" class="events-feed"><div class="loading">Загрузка...</div></div>
+  </div>
 </div>
 
 <!-- PENDING PAYMENTS -->
@@ -719,7 +783,10 @@ tr:last-child td{border:none}tr:hover td{background:#fafafa}
   <div class="section">
     <div class="sec-head">
       <span id="activeTitle">Активные салоны</span>
-      <input id="activeSearch" placeholder="🔍 Поиск по названию..." oninput="filterTable('activeTable',this.value)">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input id="activeSearch" placeholder="🔍 Поиск по названию..." oninput="filterTable('activeTable',this.value)">
+        <button class="btn btn-blue" onclick="exportCSV('active')">📤 CSV</button>
+      </div>
     </div>
     <div style="overflow-x:auto">
     <table id="activeTable">
@@ -740,7 +807,8 @@ tr:last-child td{border:none}tr:hover td{background:#fafafa}
       <span id="trialsTitle">Триалы</span>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <input id="trialsSearch" placeholder="🔍 Поиск..." oninput="filterTable('trialsTable',this.value)">
-        <button class="btn btn-red" onclick="deleteAllTrials()">🗑 Удалить все триалы</button>
+        <button class="btn btn-blue" onclick="exportCSV('trial')">📤 CSV</button>
+        <button class="btn btn-red" onclick="deleteAllTrials()">🗑 Удалить все</button>
       </div>
     </div>
     <div style="overflow-x:auto">
@@ -760,7 +828,10 @@ tr:last-child td{border:none}tr:hover td{background:#fafafa}
   <div class="section">
     <div class="sec-head">
       <span id="clientsTitle">Клиенты</span>
-      <input id="clientsSearch" placeholder="🔍 Поиск по имени/телефону..." oninput="filterTable('clientsTable',this.value)">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input id="clientsSearch" placeholder="🔍 Поиск по имени/телефону..." oninput="filterTable('clientsTable',this.value)">
+        <button class="btn btn-blue" onclick="exportClientsCSV()">📤 CSV</button>
+      </div>
     </div>
     <div style="overflow-x:auto">
     <table id="clientsTable">
@@ -784,6 +855,9 @@ const TYPE = {barber:'✂️',makeup:'💄',nails:'💅'};
 const PLAN_C = {'Мини':'#10b981','Стандарт':'#3b82f6','Бизнес':'#8b5cf6','Сеть':'#f59e0b','Старт':'#10b981','Базовый':'#3b82f6','Про':'#8b5cf6','Макс':'#f59e0b'};
 
 let loaded = {};
+let salonData = { active: [], trial: [] };
+let clientData = [];
+let regChart, statusChart;
 
 async function api(path, opts={}) {
   const sep = path.includes('?') ? '&' : '?';
@@ -800,9 +874,8 @@ function toast(msg, ms=2500) {
 function fmt(n) { return Number(n||0).toLocaleString('ru'); }
 function fmtDate(d) { return d ? d.slice(0,10) : '—'; }
 
-// ─── TABS ────────────────────────────────────────────────────────────────────
 function switchTab(name) {
-  document.querySelectorAll('.tab').forEach((t,i) => t.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   const tabs = ['overview','pending','active','trials','clients'];
   document.querySelectorAll('.tab')[tabs.indexOf(name)].classList.add('active');
@@ -811,17 +884,21 @@ function switchTab(name) {
 }
 
 function loadTab(name) {
-  if (name==='overview') loadStats();
+  if (name==='overview') loadOverview();
   if (name==='pending')  loadPending();
   if (name==='active')   loadSalons('active');
   if (name==='trials')   loadSalons('trial');
   if (name==='clients')  loadClients();
 }
 
-// ─── STATS ───────────────────────────────────────────────────────────────────
+async function loadOverview() {
+  await Promise.all([loadStats(), loadCharts(), loadExpiring(), loadEvents()]);
+}
+
 async function loadStats() {
   const s = await api('/stats');
   document.getElementById('lastUpdate').textContent = 'Обновлено: ' + new Date().toLocaleTimeString('ru');
+  const convCls = s.convRate >= 50 ? 'blue' : 'orange';
   document.getElementById('statsCards').innerHTML = \`
     <div class="card green"><div class="lbl">Активных</div><div class="val">\${s.active}</div><div class="sub">платная подписка</div></div>
     <div class="card"><div class="lbl">Триалов</div><div class="val">\${s.trial}</div><div class="sub">не оплатили ещё</div></div>
@@ -829,10 +906,80 @@ async function loadStats() {
     <div class="card"><div class="lbl">Клиентов</div><div class="val">\${fmt(s.clients)}</div><div class="sub">уникальных</div></div>
     <div class="card"><div class="lbl">Генераций/мес</div><div class="val">\${fmt(s.gens)}</div><div class="sub">текущий месяц</div></div>
     <div class="card purple"><div class="lbl">Выручка/мес</div><div class="val">₸\${fmt(s.revenue)}</div><div class="sub">~$\${Math.round(s.revenue/520)}</div></div>
+    <div class="card \${convCls}"><div class="lbl">Конверсия</div><div class="val">\${s.convRate}%</div><div class="sub">триал → оплата</div></div>
   \`;
 }
 
-// ─── PENDING PAYMENTS ────────────────────────────────────────────────────────
+async function loadCharts() {
+  const d = await api('/chart');
+  const days = [];
+  for (let i = 13; i >= 0; i--) {
+    const dt = new Date(); dt.setDate(dt.getDate() - i);
+    days.push(dt.toISOString().slice(0,10));
+  }
+  const regMap = {};
+  (d.registrations || []).forEach(r => regMap[r.day] = r.cnt);
+  const regData = days.map(day => regMap[day] || 0);
+
+  const ctx1 = document.getElementById('regChart').getContext('2d');
+  if (regChart) regChart.destroy();
+  regChart = new Chart(ctx1, {
+    type: 'bar',
+    data: { labels: days.map(x => x.slice(5)), datasets: [{ label: 'Регистраций', data: regData, backgroundColor: '#7c3aed', borderRadius: 4 }] },
+    options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } }
+  });
+
+  const sm = {};
+  (d.statuses || []).forEach(s => sm[s.status] = s.cnt);
+  const active = (sm['standard_active']||0) + (sm['premium_active']||0);
+  const trial  = sm['trial'] || 0;
+  const ctx2 = document.getElementById('statusChart').getContext('2d');
+  if (statusChart) statusChart.destroy();
+  statusChart = new Chart(ctx2, {
+    type: 'doughnut',
+    data: { labels: ['Активные','Триалы'], datasets: [{ data: [active, trial], backgroundColor: ['#10b981','#f59e0b'], borderWidth: 0 }] },
+    options: { responsive: true, plugins: { legend: { position: 'bottom' } }, cutout: '65%' }
+  });
+}
+
+async function loadExpiring() {
+  const list = await api('/expiring');
+  const el = document.getElementById('expiringSection');
+  if (!list.length) { el.style.display='none'; return; }
+  el.style.display='block';
+  document.getElementById('expiringCount').textContent = list.length;
+  document.getElementById('expiringBody').innerHTML = list.map(s => {
+    const name = s.name || s.salon_name || '—';
+    const days = Math.max(0, Math.ceil((new Date(s.paid_until) - new Date()) / 86400000));
+    const wa = s.whatsapp_phone ? \`<a href="https://wa.me/\${s.whatsapp_phone.replace(/\\D/g,'')}" target="_blank" class="btn btn-green">💬</a>\` : '—';
+    return \`<tr>
+      <td>\${TYPE[s.salon_type]??'❓'} \${name}</td>
+      <td><span style="color:\${days<=2?'#ef4444':'#f59e0b'};font-weight:700">\${days} дн</span></td>
+      <td>\${s.paid_until?.slice(0,10)||'—'}</td>
+      <td>\${s.plan_name||'—'}</td>
+      <td>\${s.client_count??0}</td>
+      <td>\${wa}</td>
+    </tr>\`;
+  }).join('');
+}
+
+async function loadEvents() {
+  const list = await api('/events');
+  document.getElementById('eventsFeed').innerHTML = list.map(e => {
+    const isPaid = e.status === 'standard_active' || e.status === 'premium_active';
+    const isTrial = e.status === 'trial';
+    const cls = isPaid ? 'paid' : isTrial ? 'trial' : 'new';
+    const icon = isPaid ? '💰' : isTrial ? '🧪' : '🆕';
+    const name = e.name || e.salon_name || '—';
+    const sub = isPaid ? '✅ ' + (e.plan_name||'') : isTrial ? '🧪 Триал' : e.status;
+    return \`<div class="event-item">
+      <div class="event-icon \${cls}">\${icon}</div>
+      <div class="event-body"><div class="etitle">\${name}</div><div class="esub">\${sub}\${e.source_track?' · '+e.source_track:''}</div></div>
+      <div class="event-time">\${fmtDate(e.created_at)}</div>
+    </div>\`;
+  }).join('') || '<div class="loading">Нет данных</div>';
+}
+
 async function loadPending() {
   const list = await api('/pending');
   const badge = document.getElementById('pendingBadge');
@@ -840,24 +987,18 @@ async function loadPending() {
   const el = document.getElementById('pendingList');
   if (!list.length) { el.innerHTML = '<div class="loading">Нет ожидающих оплат ✅</div>'; return; }
   el.innerHTML = list.map(p => {
-    const pkg  = p.temp_data?.selected_pkg ?? p.temp_data?.pkg_key ?? '—';
+    const pkg   = p.temp_data?.selected_pkg ?? p.temp_data?.pkg_key ?? '—';
     const phone = p.temp_data?.kaspi_phone ?? '—';
     const sname = p.name || p.salon_name || '—';
-    const wa   = p.whatsapp_phone ? \`<a class="wa-link" href="https://wa.me/\${p.whatsapp_phone.replace(/\\D/g,'')}">💬 WhatsApp</a>\` : '';
+    const wa    = p.whatsapp_phone ? \`<a class="wa-link" href="https://wa.me/\${p.whatsapp_phone.replace(/\\D/g,'')}">💬 WhatsApp</a>\` : '';
     return \`<div class="pending-card" id="pc_\${p.user_id}">
       <div class="pending-info">
         <b>\${sname}</b>
-        <div class="pending-meta">
-          👤 ID: \${p.user_id}<br>
-          📦 Пакет: <b>\${pkg}</b><br>
-          💳 Kaspi: \${phone}<br>
-          🕐 \${fmtDate(p.updated_at)}<br>
-          \${wa}
-        </div>
+        <div class="pending-meta">👤 ID: \${p.user_id}<br>📦 Пакет: <b>\${pkg}</b><br>💳 Kaspi: \${phone}<br>🕐 \${fmtDate(p.updated_at)}<br>\${wa}</div>
       </div>
       <div class="actions" style="flex-direction:column">
         <button class="btn btn-green" onclick="approvePayment('\${p.user_id}','\${pkg}')">✅ Подтвердить</button>
-        <button class="btn btn-red"   onclick="rejectPayment('\${p.user_id}')">❌ Отклонить</button>
+        <button class="btn btn-red" onclick="rejectPayment('\${p.user_id}')">❌ Отклонить</button>
       </div>
     </div>\`;
   }).join('');
@@ -877,9 +1018,10 @@ async function rejectPayment(userId) {
   else toast('❌ Ошибка: ' + (r.error||''));
 }
 
-// ─── SALONS ──────────────────────────────────────────────────────────────────
 async function loadSalons(status) {
   const salons = await api('/salons?status=' + status);
+  if (status === 'active') salonData.active = salons;
+  else if (status === 'trial') salonData.trial = salons;
   const isT = status === 'trial';
   const today = new Date().toISOString().slice(0,10);
 
@@ -898,8 +1040,8 @@ async function loadSalons(status) {
         <td>\${fmtDate(s.created_at)}</td>
         <td>\${owner}</td>
         <td><div class="actions">
-          \${s.admin_chat_id && s.admin_chat_id !== '0' ? \`<button class="btn btn-gray" onclick="unlinkOwner('\${s.bot_token}',this)">🔓 Отвязать</button>\` : ''}
-          <button class="btn btn-red" onclick="deleteSalon('\${s.bot_token}',this)">🗑 Удалить</button>
+          \${s.admin_chat_id && s.admin_chat_id !== '0' ? \`<button class="btn btn-gray" onclick="unlinkOwner('\${s.bot_token}',this)">🔓</button>\` : ''}
+          <button class="btn btn-red" onclick="deleteSalon('\${s.bot_token}',this)">🗑</button>
         </div></td>
       </tr>\`;
     }).join('') || '<tr><td colspan="8" class="loading">Нет триалов</td></tr>';
@@ -958,9 +1100,9 @@ async function deleteAllTrials() {
   else toast('❌ Ошибка');
 }
 
-// ─── CLIENTS ─────────────────────────────────────────────────────────────────
 async function loadClients() {
   const clients = await api('/clients');
+  clientData = clients;
   document.getElementById('clientsTitle').textContent = 'Клиенты (' + clients.length + ')';
   document.getElementById('clientsBody').innerHTML = clients.map((c,i) => \`<tr>
     <td class="num">\${i+1}</td>
@@ -972,7 +1114,6 @@ async function loadClients() {
   </tr>\`).join('') || '<tr><td colspan="6" class="loading">Нет клиентов</td></tr>';
 }
 
-// ─── SEARCH ──────────────────────────────────────────────────────────────────
 function filterTable(tableId, query) {
   const q = query.toLowerCase();
   document.querySelectorAll('#' + tableId + ' tbody tr').forEach(tr => {
@@ -980,13 +1121,43 @@ function filterTable(tableId, query) {
   });
 }
 
-// ─── INIT ────────────────────────────────────────────────────────────────────
-loadTab('overview');
-// Auto-check pending payments
+function exportCSV(status) {
+  const salons = salonData[status] || [];
+  if (!salons.length) { toast('Нет данных для экспорта'); return; }
+  const hdr = ['Название','Тип','Статус','Тариф','Клиентов','Генерации','Лимит','Оплачен до','Телефон','Источник','Создан'];
+  const rows = salons.map(s => [
+    s.name||s.salon_name||'', s.salon_type||'', s.status||'', s.plan_name||'',
+    s.client_count??0, s.monthly_generations_count??0, s.max_allowed_generations??s.plan_limit??0,
+    s.paid_until?.slice(0,10)||'', s.whatsapp_phone||'', s.source_track||'', s.created_at?.slice(0,10)||'',
+  ].map(v => '"'+String(v).replace(/"/g,'""')+'"').join(','));
+  const csv = [hdr.join(','), ...rows].join('\\n');
+  const blob = new Blob(['\\uFEFF'+csv], {type:'text/csv;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'salons_'+status+'_'+new Date().toISOString().slice(0,10)+'.csv';
+  a.click(); toast('📤 CSV скачан');
+}
+
+function exportClientsCSV() {
+  if (!clientData.length) { toast('Нет данных'); return; }
+  const hdr = ['Имя','Телефон','Примерок','Салон','Дата'];
+  const rows = clientData.map(c => [
+    c.name||'', c.phone||'', c.image_count??0, c.sname||c.salon_name||'', c.created_at?.slice(0,10)||'',
+  ].map(v => '"'+String(v).replace(/"/g,'""')+'"').join(','));
+  const csv = [hdr.join(','), ...rows].join('\\n');
+  const blob = new Blob(['\\uFEFF'+csv], {type:'text/csv;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'clients_'+new Date().toISOString().slice(0,10)+'.csv';
+  a.click(); toast('📤 CSV скачан');
+}
+
+loaded.overview = true;
+loadOverview();
 api('/pending').then(list => {
   if (list.length > 0) document.getElementById('pendingBadge').textContent = ' (' + list.length + ')';
 });
-</script>
+<\/script>
 </body>
 </html>`;
 }

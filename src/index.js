@@ -523,6 +523,172 @@ const OFERTA_HTML = `<!DOCTYPE html>
 </html>
 `;
 
+// ─── Admin Dashboard ─────────────────────────────────────────────────────────
+async function buildDashboard(env) {
+  const db = env.beauty_ai_db;
+
+  const [
+    activeRow, trialRow, totalRow,
+    clientRow, genRow,
+    salons,
+  ] = await Promise.all([
+    db.prepare(`SELECT COUNT(*) as cnt FROM salons WHERE status IN ('standard_active','premium_active')`).first(),
+    db.prepare(`SELECT COUNT(*) as cnt FROM salons WHERE status = 'trial'`).first(),
+    db.prepare(`SELECT COUNT(*) as cnt FROM salons`).first(),
+    db.prepare(`SELECT COUNT(*) as cnt FROM users`).first(),
+    db.prepare(`SELECT COALESCE(SUM(monthly_generations_count),0) as total FROM salons`).first(),
+    db.prepare(`SELECT id, name, salon_name, salon_type, status, plan_name, plan_limit,
+                       monthly_generations_count, max_allowed_generations,
+                       paid_until, whatsapp_phone, source_track,
+                       (SELECT COUNT(*) FROM users u WHERE u.bot_token = salons.bot_token) as client_count,
+                       created_at
+                FROM salons ORDER BY created_at DESC LIMIT 200`).all(),
+  ]);
+
+  // Estimated monthly revenue from active salons
+  const PLAN_PRICES = { 'Мини':14900,'Стандарт':24900,'Бизнес':39900,'Сеть':69900,'Старт':14900,'Базовый':24900,'Про':39900,'Макс':59900 };
+  let estRevenue = 0;
+  for (const s of salons.results) {
+    if (s.status === 'standard_active' || s.status === 'premium_active') {
+      estRevenue += PLAN_PRICES[s.plan_name] ?? 0;
+    }
+  }
+
+  const fmt = n => Number(n || 0).toLocaleString('ru');
+  const statusBadge = s => {
+    if (s === 'standard_active' || s === 'premium_active') return `<span class="badge green">Активен</span>`;
+    if (s === 'trial') return `<span class="badge yellow">Триал</span>`;
+    return `<span class="badge gray">${s}</span>`;
+  };
+  const typeBadge = t => ({ barber:'✂️', makeup:'💄', nails:'💅' })[t] ?? '❓';
+
+  const rows = salons.results.map((s, i) => {
+    const used  = s.monthly_generations_count ?? 0;
+    const limit = s.max_allowed_generations ?? s.plan_limit ?? 0;
+    const pct   = limit > 0 ? Math.min(100, Math.round(used / limit * 100)) : 0;
+    const barColor = pct >= 90 ? '#ef4444' : pct >= 60 ? '#f59e0b' : '#10b981';
+    const name  = s.name || s.salon_name || '—';
+    const paid  = s.paid_until ? s.paid_until.slice(0,10) : '—';
+    const src   = s.source_track ?? '—';
+    return `<tr>
+      <td class="num">${i+1}</td>
+      <td>${typeBadge(s.salon_type)}</td>
+      <td class="bold">${name}</td>
+      <td>${statusBadge(s.status)}</td>
+      <td>${s.plan_name ?? '—'}</td>
+      <td class="right">${s.client_count ?? 0}</td>
+      <td>
+        <div class="bar-wrap"><div class="bar-fill" style="width:${pct}%;background:${barColor}"></div></div>
+        <div class="bar-label">${used}/${limit}</div>
+      </td>
+      <td class="${paid !== '—' && paid < new Date().toISOString().slice(0,10) ? 'red' : ''}">${paid}</td>
+      <td class="src">${src}</td>
+    </tr>`;
+  }).join('');
+
+  return `<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Beauty AI — Dashboard</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f0f2f5;color:#1a1a1a;font-size:14px}
+.top{background:#7c3aed;color:#fff;padding:16px 24px;display:flex;align-items:center;justify-content:space-between}
+.top h1{font-size:18px;font-weight:700}
+.top small{opacity:.8;font-size:12px}
+.wrap{max-width:1200px;margin:24px auto;padding:0 16px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:24px}
+.card{background:#fff;border-radius:14px;padding:18px 20px;box-shadow:0 1px 6px rgba(0,0,0,.07)}
+.card .label{font-size:12px;color:#888;margin-bottom:6px}
+.card .value{font-size:26px;font-weight:800;color:#1a1a1a}
+.card .sub{font-size:11px;color:#aaa;margin-top:4px}
+.card.purple .value{color:#7c3aed}
+.card.green .value{color:#10b981}
+.section{background:#fff;border-radius:14px;box-shadow:0 1px 6px rgba(0,0,0,.07);overflow:hidden}
+.section-head{padding:14px 20px;border-bottom:1px solid #f3f4f6;font-weight:700;font-size:15px;display:flex;align-items:center;justify-content:space-between}
+.section-head small{font-weight:400;color:#888;font-size:12px}
+table{width:100%;border-collapse:collapse}
+th{padding:10px 12px;text-align:left;font-size:12px;color:#888;font-weight:600;border-bottom:1px solid #f3f4f6;white-space:nowrap}
+td{padding:10px 12px;border-bottom:1px solid #f9fafb;vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#fafafa}
+.num{color:#ccc;font-size:12px;width:32px}
+.bold{font-weight:600}
+.right{text-align:right}
+.red{color:#ef4444;font-weight:600}
+.src{color:#aaa;font-size:11px;max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.badge{display:inline-block;padding:2px 9px;border-radius:99px;font-size:11px;font-weight:700}
+.badge.green{background:#d1fae5;color:#065f46}
+.badge.yellow{background:#fef3c7;color:#92400e}
+.badge.gray{background:#f3f4f6;color:#9ca3af}
+.bar-wrap{background:#f3f4f6;border-radius:99px;height:5px;overflow:hidden;width:80px}
+.bar-fill{height:100%;border-radius:99px}
+.bar-label{font-size:11px;color:#888;margin-top:2px}
+@media(max-width:700px){td.src,th:last-child{display:none}.wrap{padding:0 8px}}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>✨ Beauty AI Dashboard</h1>
+  <small>Обновлено: ${new Date().toLocaleString('ru',{timeZone:'Asia/Almaty'})}</small>
+</div>
+<div class="wrap">
+  <div class="cards">
+    <div class="card green">
+      <div class="label">Активных салонов</div>
+      <div class="value">${activeRow?.cnt ?? 0}</div>
+      <div class="sub">платная подписка</div>
+    </div>
+    <div class="card">
+      <div class="label">Триалов</div>
+      <div class="value">${trialRow?.cnt ?? 0}</div>
+      <div class="sub">не оплатили ещё</div>
+    </div>
+    <div class="card">
+      <div class="label">Всего салонов</div>
+      <div class="value">${totalRow?.cnt ?? 0}</div>
+      <div class="sub">в базе</div>
+    </div>
+    <div class="card">
+      <div class="label">Клиентов</div>
+      <div class="value">${fmt(clientRow?.cnt)}</div>
+      <div class="sub">уникальных</div>
+    </div>
+    <div class="card">
+      <div class="label">Генераций / мес</div>
+      <div class="value">${fmt(genRow?.total)}</div>
+      <div class="sub">текущий месяц</div>
+    </div>
+    <div class="card purple">
+      <div class="label">Выручка / мес</div>
+      <div class="value">₸${fmt(estRevenue)}</div>
+      <div class="sub">~$${Math.round(estRevenue/520)}</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head">
+      Все салоны
+      <small>${salons.results.length} записей</small>
+    </div>
+    <div style="overflow-x:auto">
+    <table>
+      <thead><tr>
+        <th>#</th><th></th><th>Название</th><th>Статус</th>
+        <th>Тариф</th><th>Клиентов</th><th>Генерации</th>
+        <th>Оплачен до</th><th>Источник</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    </div>
+  </div>
+</div>
+</body>
+</html>`;
+}
+
 // ─── Entry point ─────────────────────────────────────────────────────────────
 export default {
   async fetch(request, env, ctx) {
@@ -531,6 +697,18 @@ export default {
     // ── Public oferta page (GET /oferta) ──
     if (request.method === 'GET' && url.pathname === '/oferta') {
       return new Response(OFERTA_HTML, {
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      });
+    }
+
+    // ── Admin dashboard (GET /dashboard?key=ADMIN_USER_ID) ──
+    if (request.method === 'GET' && url.pathname === '/dashboard') {
+      const key = url.searchParams.get('key');
+      const adminIds = getPrimaryAdminIds(env);
+      if (!key || !adminIds.includes(key)) {
+        return new Response('403 Forbidden', { status: 403 });
+      }
+      return new Response(await buildDashboard(env), {
         headers: { 'Content-Type': 'text/html; charset=utf-8' },
       });
     }

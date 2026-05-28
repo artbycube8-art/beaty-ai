@@ -905,7 +905,7 @@ function renderPager(status, page, pages) {
   const el = document.getElementById(id);
   if (!el) return;
   if (!pages || pages <= 1) { el.innerHTML = ''; return; }
-  const st = JSON.stringify(status);
+  const st = "'" + status + "'";
   el.innerHTML =
     (page > 1 ? '<button class="btn btn-gray" onclick="loadSalons(' + st + ',' + (page-1) + ')">← Пред</button>' : '<span></span>') +
     '<span>Страница <b>' + page + '</b> из ' + pages + '</span>' +

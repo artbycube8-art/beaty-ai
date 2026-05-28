@@ -295,15 +295,37 @@ document.getElementById('csvFile').addEventListener('change', function(e) {
 function parseCSV(text) {
   const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   contacts = [];
+
   for (const line of lines) {
     const parts = line.split(/[,;|\t]/);
-    let phone = parts[0]?.replace(/\D/g, '') ?? '';
-    const name  = parts[1]?.trim() ?? '';
-    if (phone.length < 10) continue;
-    if (!phone.startsWith('7') && !phone.startsWith('8')) phone = '7' + phone;
+
+    // Find which column contains the phone number
+    let phoneIdx = -1;
+    for (let i = 0; i < parts.length; i++) {
+      const digits = parts[i].replace(/\D/g, '');
+      if (digits.length >= 10) { phoneIdx = i; break; }
+    }
+    if (phoneIdx === -1) continue; // no phone found — skip header or bad row
+
+    let phone = parts[phoneIdx].replace(/\D/g, '');
+    // Normalize to 7xxxxxxxxxx
+    if (phone.length === 10) phone = '7' + phone;
     if (phone.startsWith('8')) phone = '7' + phone.slice(1);
+    if (phone.length < 11) continue;
+
+    // Name: first non-phone, non-url column
+    let name = '';
+    for (let i = 0; i < parts.length; i++) {
+      if (i === phoneIdx) continue;
+      const val = parts[i].trim();
+      if (!val || val.startsWith('http') || /^\d+$/.test(val)) continue;
+      name = val;
+      break;
+    }
+
     contacts.push({ phone, name });
   }
+
   if (contacts.length === 0) {
     alert('Не найдено номеров. Проверьте формат файла.');
     return;

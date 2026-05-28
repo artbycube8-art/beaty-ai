@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Beauty AI — WhatsApp рассылка</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; color: #1a1a1a; }
+
+  .header {
+    background: #7c3aed;
+    color: white;
+    padding: 20px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  }
+  .header h1 { font-size: 18px; font-weight: 700; }
+  .stats { font-size: 14px; opacity: 0.9; }
+  .stats span { font-weight: 700; }
+
+  .upload-zone {
+    max-width: 600px;
+    margin: 40px auto;
+    background: white;
+    border-radius: 16px;
+    padding: 40px;
+    text-align: center;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+  }
+  .upload-zone h2 { font-size: 20px; margin-bottom: 12px; }
+  .upload-zone p { color: #666; margin-bottom: 24px; font-size: 14px; line-height: 1.6; }
+  .upload-btn {
+    display: inline-block;
+    background: #7c3aed;
+    color: white;
+    padding: 12px 28px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 15px;
+    font-weight: 600;
+    transition: background 0.2s;
+  }
+  .upload-btn:hover { background: #6d28d9; }
+  input[type=file] { display: none; }
+
+  .format-hint {
+    margin-top: 20px;
+    background: #f5f3ff;
+    border-radius: 10px;
+    padding: 14px 16px;
+    text-align: left;
+    font-size: 13px;
+    color: #555;
+    line-height: 1.7;
+  }
+  .format-hint code { background: #e5e7eb; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+
+  .list-wrap { max-width: 700px; margin: 0 auto 40px; padding: 0 16px; }
+
+  .progress-bar-wrap { background: white; border-radius: 12px; padding: 16px 20px; margin-bottom: 16px; box-shadow: 0 1px 6px rgba(0,0,0,0.07); }
+  .progress-bar-track { background: #e5e7eb; border-radius: 99px; height: 8px; overflow: hidden; margin-top: 8px; }
+  .progress-bar-fill { background: #10b981; height: 100%; border-radius: 99px; transition: width 0.3s; }
+  .progress-label { font-size: 13px; color: #555; display: flex; justify-content: space-between; }
+
+  .contact-card {
+    background: white;
+    border-radius: 14px;
+    padding: 16px 18px;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.07);
+    transition: opacity 0.3s;
+  }
+  .contact-card.sent { opacity: 0.45; }
+
+  .contact-num {
+    width: 32px;
+    height: 32px;
+    background: #f3f4f6;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    color: #888;
+    flex-shrink: 0;
+  }
+
+  .contact-info { flex: 1; min-width: 0; }
+  .contact-phone { font-size: 15px; font-weight: 600; }
+  .contact-name { font-size: 12px; color: #888; margin-top: 2px; }
+  .variant-badge {
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 99px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .v-a { background: #dbeafe; color: #1d4ed8; }
+  .v-b { background: #fce7f3; color: #9d174d; }
+  .v-c { background: #d1fae5; color: #065f46; }
+
+  .send-btn {
+    background: #25d366;
+    color: white;
+    border: none;
+    padding: 9px 18px;
+    border-radius: 9px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: background 0.2s;
+  }
+  .send-btn:hover { background: #1ebe5b; }
+  .send-btn.done {
+    background: #e5e7eb;
+    color: #9ca3af;
+    cursor: default;
+  }
+
+  .preview-section {
+    max-width: 700px;
+    margin: 0 auto 20px;
+    padding: 0 16px;
+  }
+  .preview-toggle {
+    background: white;
+    border: none;
+    border-radius: 10px;
+    padding: 10px 16px;
+    font-size: 13px;
+    cursor: pointer;
+    color: #7c3aed;
+    font-weight: 600;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.07);
+    width: 100%;
+    text-align: left;
+  }
+  .preview-box {
+    display: none;
+    background: white;
+    border-radius: 10px;
+    margin-top: 8px;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.07);
+    overflow: hidden;
+  }
+  .preview-box.open { display: block; }
+  .preview-tab-bar { display: flex; border-bottom: 1px solid #f0f0f0; }
+  .preview-tab {
+    flex: 1;
+    padding: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    text-align: center;
+    cursor: pointer;
+    color: #888;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+  }
+  .preview-tab.active { color: #7c3aed; border-bottom-color: #7c3aed; }
+  .preview-content { padding: 16px; font-size: 13px; line-height: 1.7; white-space: pre-wrap; display: none; color: #333; }
+  .preview-content.active { display: block; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>✉️ Beauty AI — WhatsApp рассылка</h1>
+  <div class="stats" id="stats" style="display:none">
+    Отправлено: <span id="sentCount">0</span> / <span id="totalCount">0</span>
+  </div>
+</div>
+
+<div class="upload-zone" id="uploadZone">
+  <h2>📋 Загрузите список контактов</h2>
+  <p>CSV-файл с номерами телефонов салонов.<br>Скрипт автоматически чередует 3 варианта текста.</p>
+  <label class="upload-btn" for="csvFile">Выбрать CSV файл</label>
+  <input type="file" id="csvFile" accept=".csv,.txt">
+  <div class="format-hint">
+    <b>Формат CSV:</b><br>
+    Первая колонка — номер телефона (с кодом страны)<br>
+    Вторая колонка — название салона (необязательно)<br><br>
+    Примеры:<br>
+    <code>77001112233</code><br>
+    <code>77001112233,ChopChop Almaty</code><br>
+    <code>+7 700 111 22 33,Barbershop</code>
+  </div>
+</div>
+
+<div id="appContent" style="display:none">
+  <div class="preview-section">
+    <button class="preview-toggle" onclick="togglePreview()">👁 Посмотреть тексты сообщений (варианты А / Б / В)</button>
+    <div class="preview-box" id="previewBox">
+      <div class="preview-tab-bar">
+        <div class="preview-tab active" onclick="showTab(0)">Вариант А</div>
+        <div class="preview-tab" onclick="showTab(1)">Вариант Б</div>
+        <div class="preview-tab" onclick="showTab(2)">Вариант В</div>
+      </div>
+      <div class="preview-content active" id="tab0"></div>
+      <div class="preview-content" id="tab1"></div>
+      <div class="preview-content" id="tab2"></div>
+    </div>
+  </div>
+
+  <div class="list-wrap">
+    <div class="progress-bar-wrap">
+      <div class="progress-label">
+        <span>Прогресс рассылки</span>
+        <span id="progressText">0 из 0</span>
+      </div>
+      <div class="progress-bar-track">
+        <div class="progress-bar-fill" id="progressFill" style="width:0%"></div>
+      </div>
+    </div>
+    <div id="contactList"></div>
+  </div>
+</div>
+
+<script>
+const B2B_LINK = 'https://t.me/qrbeatyai_bot?start=b2b_wa';
+
+const SCRIPTS = [
+  // Вариант А
+  (name) =>
+`Здравствуйте${name ? ', ' + name : ''}! 👋
+Вас приветствует компания Beauty 🎀 Ai.
+
+Мы нашли способ, как салоны в Казахстане получают новых клиентов без таргета и без сторис. 🔥
+
+Клиент видит себя с готовой причёской на своём фото — прямо в телефоне. Сам выбирает стиль своей причёски, сам принимает решение — и это Магия! ✨
+Вы получаете человека, который уже определился и готов записаться.
+
+Испытайте это на себе прямо сейчас — в нашем бесплатном демо-режиме:
+👉 ${B2B_LINK}`,
+
+  // Вариант Б
+  (name) =>
+`Здравствуйте${name ? ', ' + name : ''}! 👋
+Это Beauty 🎀 Ai — ИИ-подбор причёсок для салонов Казахстана.
+
+Мы нашли способ, как салоны получают новых клиентов без таргета и без сторис. 🔥
+
+Клиент примеряет стрижку на своё фото прямо в телефоне. Сам выбирает стиль, сам принимает решение — и это Магия! ✨
+К вам приходит человек, который уже знает чего хочет и готов записаться.
+
+Проверьте сами абсолютно бесплатно — в демо-режиме:
+👉 ${B2B_LINK}`,
+
+  // Вариант В
+  (name) =>
+`Здравствуйте${name ? ', ' + name : ''}! 👋
+Компания Beauty 🎀 Ai — ИИ-сервис для салонов Казахстана.
+
+Мы нашли способ привлекать новых клиентов без таргета и без сторис. 🔥
+
+Ваш клиент видит себя с готовой причёской на своём фото — прямо в телефоне. Сам выбирает стиль, сам принимает решение — и это Магия! ✨
+Вы получаете человека, который уже определился и готов прийти.
+
+Убедитесь сами прямо сейчас — бесплатный демо-режим:
+👉 ${B2B_LINK}`,
+];
+
+const VARIANT_LABELS = ['А', 'Б', 'В'];
+const VARIANT_CLASSES = ['v-a', 'v-b', 'v-c'];
+
+let contacts = [];
+let sentSet  = new Set();
+
+// Show script previews
+document.getElementById('tab0').textContent = SCRIPTS[0]('Название салона');
+document.getElementById('tab1').textContent = SCRIPTS[1]('Название салона');
+document.getElementById('tab2').textContent = SCRIPTS[2]('Название салона');
+
+document.getElementById('csvFile').addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    parseCSV(ev.target.result);
+  };
+  reader.readAsText(file, 'UTF-8');
+});
+
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  contacts = [];
+  for (const line of lines) {
+    const parts = line.split(/[,;|\t]/);
+    let phone = parts[0]?.replace(/\D/g, '') ?? '';
+    const name  = parts[1]?.trim() ?? '';
+    if (phone.length < 10) continue;
+    if (!phone.startsWith('7') && !phone.startsWith('8')) phone = '7' + phone;
+    if (phone.startsWith('8')) phone = '7' + phone.slice(1);
+    contacts.push({ phone, name });
+  }
+  if (contacts.length === 0) {
+    alert('Не найдено номеров. Проверьте формат файла.');
+    return;
+  }
+  renderList();
+}
+
+function renderList() {
+  document.getElementById('uploadZone').style.display  = 'none';
+  document.getElementById('appContent').style.display  = 'block';
+  document.getElementById('stats').style.display       = 'flex';
+  document.getElementById('totalCount').textContent    = contacts.length;
+  updateProgress();
+
+  const list = document.getElementById('contactList');
+  list.innerHTML = '';
+
+  contacts.forEach((c, i) => {
+    const variantIdx = i % 3;
+    const card = document.createElement('div');
+    card.className = 'contact-card' + (sentSet.has(i) ? ' sent' : '');
+    card.id = 'card-' + i;
+    card.innerHTML = `
+      <div class="contact-num">${i + 1}</div>
+      <div class="contact-info">
+        <div class="contact-phone">${formatPhone(c.phone)}</div>
+        ${c.name ? `<div class="contact-name">${c.name}</div>` : ''}
+      </div>
+      <div class="variant-badge ${VARIANT_CLASSES[variantIdx]}">Вариант ${VARIANT_LABELS[variantIdx]}</div>
+      <button class="send-btn${sentSet.has(i) ? ' done' : ''}" id="btn-${i}" onclick="sendMsg(${i})">
+        ${sentSet.has(i) ? '✓ Отправлено' : '💬 Написать'}
+      </button>
+    `;
+    list.appendChild(card);
+  });
+}
+
+function sendMsg(i) {
+  const c = contacts[i];
+  const variantIdx = i % 3;
+  const text = SCRIPTS[variantIdx](c.name || '');
+  const url  = `https://wa.me/${c.phone}?text=${encodeURIComponent(text)}`;
+  window.open(url, '_blank');
+
+  // Mark as sent after 2 sec (time to switch to WhatsApp)
+  setTimeout(() => {
+    sentSet.add(i);
+    const btn  = document.getElementById('btn-' + i);
+    const card = document.getElementById('card-' + i);
+    if (btn)  { btn.textContent = '✓ Отправлено'; btn.className = 'send-btn done'; }
+    if (card) { card.className = 'contact-card sent'; }
+    updateProgress();
+  }, 2000);
+}
+
+function updateProgress() {
+  const sent  = sentSet.size;
+  const total = contacts.length;
+  const pct   = total > 0 ? Math.round(sent / total * 100) : 0;
+  document.getElementById('sentCount').textContent   = sent;
+  document.getElementById('progressText').textContent = `${sent} из ${total}`;
+  document.getElementById('progressFill').style.width = pct + '%';
+}
+
+function formatPhone(p) {
+  if (p.length === 11 && p.startsWith('7')) {
+    return `+7 (${p.slice(1,4)}) ${p.slice(4,7)}-${p.slice(7,9)}-${p.slice(9)}`;
+  }
+  return '+' + p;
+}
+
+function togglePreview() {
+  document.getElementById('previewBox').classList.toggle('open');
+}
+
+function showTab(idx) {
+  document.querySelectorAll('.preview-tab').forEach((t, i) => t.classList.toggle('active', i === idx));
+  document.querySelectorAll('.preview-content').forEach((c, i) => c.classList.toggle('active', i === idx));
+}
+</script>
+</body>
+</html>

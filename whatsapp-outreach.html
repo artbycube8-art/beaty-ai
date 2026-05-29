@@ -108,6 +108,10 @@
   .v-a { background: #dbeafe; color: #1d4ed8; }
   .v-b { background: #fce7f3; color: #9d174d; }
   .v-c { background: #d1fae5; color: #065f46; }
+  .v-d { background: #fef3c7; color: #92400e; }
+  .v-e { background: #fee2e2; color: #991b1b; }
+  .v-f { background: #ecfdf5; color: #065f46; }
+  .v-g { background: #f3f4f6; color: #374151; }
   .v-csv { background: #ede9fe; color: #6d28d9; }
 
   .send-btn {
@@ -185,7 +189,7 @@
 
 <div class="upload-zone" id="uploadZone">
   <h2>📋 Загрузите список контактов</h2>
-  <p>CSV-файл с номерами телефонов салонов.<br>Скрипт автоматически чередует 3 варианта текста.</p>
+  <p>CSV-файл с номерами телефонов салонов.<br>Скрипт автоматически чередует 7 вариантов текста.</p>
   <label class="upload-btn" for="csvFile">Выбрать CSV файл</label>
   <input type="file" id="csvFile" accept=".csv,.txt">
   <div class="format-hint">
@@ -201,16 +205,24 @@
 
 <div id="appContent" style="display:none">
   <div class="preview-section">
-    <button class="preview-toggle" onclick="togglePreview()">👁 Посмотреть тексты сообщений (варианты А / Б / В)</button>
+    <button class="preview-toggle" onclick="togglePreview()">👁 Посмотреть тексты сообщений (варианты А — Ж)</button>
     <div class="preview-box" id="previewBox">
       <div class="preview-tab-bar">
-        <div class="preview-tab active" onclick="showTab(0)">Вариант А</div>
-        <div class="preview-tab" onclick="showTab(1)">Вариант Б</div>
-        <div class="preview-tab" onclick="showTab(2)">Вариант В</div>
+        <div class="preview-tab active" onclick="showTab(0)">А</div>
+        <div class="preview-tab" onclick="showTab(1)">Б</div>
+        <div class="preview-tab" onclick="showTab(2)">В</div>
+        <div class="preview-tab" onclick="showTab(3)">Г</div>
+        <div class="preview-tab" onclick="showTab(4)">Д</div>
+        <div class="preview-tab" onclick="showTab(5)">Е</div>
+        <div class="preview-tab" onclick="showTab(6)">Ж</div>
       </div>
       <div class="preview-content active" id="tab0"></div>
       <div class="preview-content" id="tab1"></div>
       <div class="preview-content" id="tab2"></div>
+      <div class="preview-content" id="tab3"></div>
+      <div class="preview-content" id="tab4"></div>
+      <div class="preview-content" id="tab5"></div>
+      <div class="preview-content" id="tab6"></div>
     </div>
   </div>
 
@@ -229,59 +241,131 @@
 </div>
 
 <script>
-const B2B_LINK = 'https://t.me/qrbeatyai_bot?start=b2b_wa';
+const B2B_LINK   = 'https://t.me/qrbeatyai_bot?start=b2b_wa';
+const MEDIA_LINK = 'https://drive.google.com/file/d/1xtXq1ftQffEtm-pIytgKVKHzAqOIJBFP/view?usp=sharing';
 
 const SCRIPTS = [
-  // Вариант А
+  // А — Магия
   (name) =>
-`Здравствуйте${name ? ', ' + name : ''}! 👋
+`Здравствуйте${name ? ', ' + name : ''} 👋
 Вас приветствует компания Beauty 🎀 Ai.
 
-Мы нашли способ, как салоны в Казахстане получают новых клиентов без таргета и без сторис. 🔥
+Мы нашли способ, как салоны в Казахстане получают новых клиентов без таргета и без сторис.🔥
 
-Клиент видит себя с готовой причёской на своём фото — прямо в телефоне. Сам выбирает стиль своей причёски, сам принимает решение — и это Магия! ✨
+Клиент видит себя с готовой причёской на своём фото — прямо в телефоне. Сам выбирает стиль своей прически, сам принимает решение и это Магия! ✨
 Вы получаете человека, который уже определился и готов записаться.
 
 Испытайте это на себе прямо сейчас — в нашем бесплатном демо-режиме:
-👉 ${B2B_LINK}`,
+👉 ${B2B_LINK}
+🎬 ${MEDIA_LINK}`,
 
-  // Вариант Б
+  // Б — Без уговоров
+  (name) =>
+`Привет${name ? ', ' + name : ''}! 👋
+Это Beauty 🎀 Ai — мы помогаем салонам Казахстана получать клиентов по-новому.
+
+Представьте: человек ещё дома видит себя с новой причёской на своём фото 📸
+Сам выбирает. Сам влюбляется. Сам записывается.
+
+К вам приходит клиент который уже знает чего хочет — без уговоров и сомнений. 💇‍♀️
+
+Попробуйте бесплатно прямо сейчас:
+👉 ${B2B_LINK}
+🎬 ${MEDIA_LINK}`,
+
+  // В — Цифры
   (name) =>
 `Здравствуйте${name ? ', ' + name : ''}! 👋
-Это Beauty 🎀 Ai — ИИ-подбор причёсок для салонов Казахстана.
+Beauty 🎀 Ai на связи.
 
-Мы нашли способ, как салоны получают новых клиентов без таргета и без сторис. 🔥
+Знаете почему клиенты долго думают перед записью? 🤔
+Они боятся что новая причёска им не подойдёт.
 
-Клиент примеряет стрижку на своё фото прямо в телефоне. Сам выбирает стиль, сам принимает решение — и это Магия! ✨
-К вам приходит человек, который уже знает чего хочет и готов записаться.
+Мы решили эту проблему — клиент примеряет причёску на своё фото прямо в телефоне ✨
+Видит результат → принимает решение → записывается к вам.
 
-Проверьте сами абсолютно бесплатно — в демо-режиме:
-👉 ${B2B_LINK}`,
+Салоны которые уже попробовали — говорят что клиенты приходят более уверенными и довольными 🔥
 
-  // Вариант В
+Бесплатное демо для вас:
+👉 ${B2B_LINK}
+🎬 ${MEDIA_LINK}`,
+
+  // Г — Эмоция
   (name) =>
-`Здравствуйте${name ? ', ' + name : ''}! 👋
-Компания Beauty 🎀 Ai — ИИ-сервис для салонов Казахстана.
+`${name ? name + ', ' : ''}добрый день! ✨
+Пишет вам Beauty 🎀 Ai.
 
-Мы нашли способ привлекать новых клиентов без таргета и без сторис. 🔥
+Мы сделали кое-что крутое для салонов Казахстана 🇰🇿
 
-Ваш клиент видит себя с готовой причёской на своём фото — прямо в телефоне. Сам выбирает стиль, сам принимает решение — и это Магия! ✨
-Вы получаете человека, который уже определился и готов прийти.
+Ваши клиенты теперь могут увидеть себя с новой причёской — прямо на своём фото, прямо в телефоне 📱
+Никаких журналов. Никаких "а вдруг не подойдёт".
 
-Убедитесь сами прямо сейчас — бесплатный демо-режим:
-👉 ${B2B_LINK}`,
+Человек видит себя красивым — и сразу хочет записаться именно к вам 💫
+
+Это бесплатно. Попробуйте прямо сейчас:
+👉 ${B2B_LINK}
+🎬 ${MEDIA_LINK}`,
+
+  // Д — Боль → Решение
+  (name) =>
+`Здравствуйте${name ? ', ' + name : ''} 👋
+Beauty 🎀 Ai приветствует вас!
+
+Таргет дорожает. Сторис отнимают время. Клиенты думают неделями. 😔
+
+Мы нашли другой путь 🔥
+Клиент загружает своё фото → примеряет причёску → видит себя красивым → записывается.
+
+Всё это — без вашего участия. Автоматически. Прямо в телефоне клиента 📱
+
+Вы просто получаете человека готового к записи ✅
+
+Проверьте сами — демо бесплатное:
+👉 ${B2B_LINK}
+🎬 ${MEDIA_LINK}`,
+
+  // Е — Эксклюзив
+  (name) =>
+`${name ? name + ', ' : ''}здравствуйте! 🌟
+Это Beauty 🎀 Ai — мы сейчас запускаемся в Астане.
+
+Приглашаем ваш салон в число первых кто попробует нашу технологию 🎯
+
+Клиент примеряет любую причёску на своё фото прямо в телефоне ✨
+Видит результат — и записывается именно к вам. Без сомнений.
+
+Первые салоны получают доступ бесплатно 🔥
+
+Успейте попробовать:
+👉 ${B2B_LINK}
+🎬 ${MEDIA_LINK}`,
+
+  // Ж — Короткий удар
+  (name) =>
+`${name ? name + ', ' : ''}привет! 👋
+Beauty 🎀 Ai здесь.
+
+Один вопрос — а что если ваши клиенты могли бы увидеть свою новую причёску ДО записи? 🤔
+
+Прямо на своём фото. Прямо в телефоне.
+Выбрали стиль → записались → пришли уверенными ✨
+
+Это реально работает. И это бесплатно для теста 🔥
+
+👉 ${B2B_LINK}
+🎬 ${MEDIA_LINK}`,
 ];
 
-const VARIANT_LABELS = ['А', 'Б', 'В'];
-const VARIANT_CLASSES = ['v-a', 'v-b', 'v-c'];
+const VARIANT_LABELS  = ['А', 'Б', 'В', 'Г', 'Д', 'Е', 'Ж'];
+const VARIANT_CLASSES = ['v-a', 'v-b', 'v-c', 'v-d', 'v-e', 'v-f', 'v-g'];
 
 let contacts = [];
 let sentSet  = new Set();
 
 // Show script previews
-document.getElementById('tab0').textContent = SCRIPTS[0]('Название салона');
-document.getElementById('tab1').textContent = SCRIPTS[1]('Название салона');
-document.getElementById('tab2').textContent = SCRIPTS[2]('Название салона');
+for (let i = 0; i < SCRIPTS.length; i++) {
+  document.getElementById('tab' + i).textContent = SCRIPTS[i]('Название салона');
+}
 
 document.getElementById('csvFile').addEventListener('change', function(e) {
   const file = e.target.files[0];
@@ -375,7 +459,7 @@ function renderList() {
 
   contacts.forEach((c, i) => {
     const hasCsvScript = !!c.script;
-    const variantIdx   = i % 3;
+    const variantIdx   = i % 7;
     const badgeLabel   = hasCsvScript ? '📋 Скрипт CSV' : 'Вариант ' + VARIANT_LABELS[variantIdx];
     const badgeClass   = hasCsvScript ? 'v-csv' : VARIANT_CLASSES[variantIdx];
     const card = document.createElement('div');
@@ -406,7 +490,7 @@ function sendMsg(i) {
       text = text.trimEnd() + '\n' + B2B_LINK;
     }
   } else {
-    text = SCRIPTS[i % 3](c.name || '');
+    text = SCRIPTS[i % 7](c.name || '');
   }
   const url = `https://wa.me/${c.phone}?text=${encodeURIComponent(text)}`;
   window.open(url, '_blank');

@@ -43,6 +43,7 @@ const S = {
   B2B_PHONE           : 'b2b_phone',
   B2B_TYPE            : 'b2b_type',    // type selection step between name and phone
   // B2B payment flow
+  B2B_DISCOUNT             : 'b2b_discount',
   B2B_AWAITING_PHONE       : 'b2b_awaiting_phone',
   B2B_AWAITING_CHEQUE      : 'b2b_awaiting_cheque',
   B2B_CONFIRMATION_PENDING : 'b2b_confirmation_pending', // anti-spam lock after cheque sent
@@ -864,7 +865,7 @@ const KEY = '${key}';
 const API = '${workerUrl}/api';
 const BOT = '${env.STANDARD_BOT_USERNAME ?? 'qrbeatyai_bot'}';
 
-const TYPE = {barber:'✂️',makeup:'💄',nails:'💅'};
+const TYPE = {barber:'💇',makeup:'💄',nails:'💅'};
 const PLAN_C = {'Мини':'#10b981','Стандарт':'#3b82f6','Бизнес':'#8b5cf6','Сеть':'#f59e0b','Старт':'#10b981','Базовый':'#3b82f6','Про':'#8b5cf6','Макс':'#f59e0b'};
 
 let loaded = {};
@@ -872,15 +873,31 @@ let salonData = { active: [], trial: [] };
 let clientData = [];
 let regChart, statusChart;
 
+const TRIAL_BOT_LINK   = 'https://t.me/qrbeatyai_bot?start=b2b';
+const TRIAL_MEDIA_LINK = 'https://drive.google.com/file/d/1xtXq1ftQffEtm-pIytgKVKHzAqOIJBFP/view?usp=sharing';
+
 const TRIAL_SCRIPTS = [
-  'Здравствуйте{name}! 👋\\nВас приветствует компания Beauty 🎀 Ai.\\n\\nМы нашли способ, как салоны в Казахстане получают новых клиентов без таргета и без сторис. 🔥\\n\\nКлиент видит себя с готовой причёской на своём фото — прямо в телефоне. Сам выбирает стиль своей прически, сам принимает решение — и это Магия! ✨\\nВы получаете человека, который уже определился и готов записаться.\\n\\nИспытайте это на себе прямо сейчас — в бесплатном демо-режиме:\\n👉 https://t.me/qrbeatyai_bot?start=b2b',
-  'Здравствуйте{name}! 👋\\nЭто Beauty 🎀 Ai — ИИ-подбор причёсок для салонов Казахстана.\\n\\nМы нашли способ привлекать новых клиентов без таргета и без сторис. 🔥\\n\\nКлиент примеряет стрижку на своё фото прямо в телефоне. Сам выбирает стиль, сам принимает решение — и это Магия! ✨\\nК вам приходит человек, который уже знает чего хочет.\\n\\nПроверьте сами абсолютно бесплатно:\\n👉 https://t.me/qrbeatyai_bot?start=b2b',
-  'Здравствуйте{name}! 👋\\nКомпания Beauty 🎀 Ai — ИИ-сервис для салонов Казахстана.\\n\\nМы нашли способ получать новых клиентов без таргета и без сторис. 🔥\\n\\nВаш клиент видит себя с готовой причёской на своём фото — прямо в телефоне. Сам выбирает стиль, сам принимает решение — Магия! ✨\\nВы получаете человека, который уже определился и готов прийти.\\n\\nУбедитесь сами — бесплатный демо-режим:\\n👉 https://t.me/qrbeatyai_bot?start=b2b',
+  // А — Магия
+  'Здравствуйте{name} 👋\\nВас приветствует компания Beauty 🎀 Ai.\\n\\nМы нашли способ, как салоны в Казахстане получают новых клиентов без таргета и без сторис.🔥\\n\\nКлиент видит себя с готовой причёской на своём фото — прямо в телефоне. Сам выбирает стиль своей прически, сам принимает решение и это Магия! ✨\\nВы получаете человека, который уже определился и готов записаться.\\n\\nИспытайте это на себе прямо сейчас — в нашем бесплатном демо-режиме:\\n👉 ' + TRIAL_BOT_LINK + '\\n🎬 ' + TRIAL_MEDIA_LINK,
+  // Б — Без уговоров
+  'Привет{name}! 👋\\nЭто Beauty 🎀 Ai — мы помогаем салонам Казахстана получать клиентов по-новому.\\n\\nПредставьте: человек ещё дома видит себя с новой причёской на своём фото 📸\\nСам выбирает. Сам влюбляется. Сам записывается.\\n\\nК вам приходит клиент который уже знает чего хочет — без уговоров и сомнений. 💇‍♀️\\n\\nПопробуйте бесплатно прямо сейчас:\\n👉 ' + TRIAL_BOT_LINK + '\\n🎬 ' + TRIAL_MEDIA_LINK,
+  // В — Цифры
+  'Здравствуйте{name}! 👋\\nBeauty 🎀 Ai на связи.\\n\\nЗнаете почему клиенты долго думают перед записью? 🤔\\nОни боятся что новая причёска им не подойдёт.\\n\\nМы решили эту проблему — клиент примеряет причёску на своё фото прямо в телефоне ✨\\nВидит результат → принимает решение → записывается к вам.\\n\\nСалоны которые уже попробовали — говорят что клиенты приходят более уверенными и довольными 🔥\\n\\nБесплатное демо для вас:\\n👉 ' + TRIAL_BOT_LINK + '\\n🎬 ' + TRIAL_MEDIA_LINK,
+  // Г — Эмоция
+  '{namePrefix}добрый день! ✨\\nПишет вам Beauty 🎀 Ai.\\n\\nМы сделали кое-что крутое для салонов Казахстана 🇰🇿\\n\\nВаши клиенты теперь могут увидеть себя с новой причёской — прямо на своём фото, прямо в телефоне 📱\\nНикаких журналов. Никаких "а вдруг не подойдёт".\\n\\nЧеловек видит себя красивым — и сразу хочет записаться именно к вам 💫\\n\\nЭто бесплатно. Попробуйте прямо сейчас:\\n👉 ' + TRIAL_BOT_LINK + '\\n🎬 ' + TRIAL_MEDIA_LINK,
+  // Д — Боль → Решение
+  'Здравствуйте{name} 👋\\nBeauty 🎀 Ai приветствует вас!\\n\\nТаргет дорожает. Сторис отнимают время. Клиенты думают неделями. 😔\\n\\nМы нашли другой путь 🔥\\nКлиент загружает своё фото → примеряет причёску → видит себя красивым → записывается.\\n\\nВсё это — без вашего участия. Автоматически. Прямо в телефоне клиента 📱\\n\\nВы просто получаете человека готового к записи ✅\\n\\nПроверьте сами — демо бесплатное:\\n👉 ' + TRIAL_BOT_LINK + '\\n🎬 ' + TRIAL_MEDIA_LINK,
+  // Е — Эксклюзив
+  '{namePrefix}здравствуйте! 🌟\\nЭто Beauty 🎀 Ai — мы сейчас запускаемся в Астане.\\n\\nПриглашаем ваш салон в число первых кто попробует нашу технологию 🎯\\n\\nКлиент примеряет любую причёску на своё фото прямо в телефоне ✨\\nВидит результат — и записывается именно к вам. Без сомнений.\\n\\nПервые салоны получают доступ бесплатно 🔥\\n\\nУспейте попробовать:\\n👉 ' + TRIAL_BOT_LINK + '\\n🎬 ' + TRIAL_MEDIA_LINK,
+  // Ж — Короткий удар
+  '{namePrefix}привет! 👋\\nBeauty 🎀 Ai здесь.\\n\\nОдин вопрос — а что если ваши клиенты могли бы увидеть свою новую причёску ДО записи? 🤔\\n\\nПрямо на своём фото. Прямо в телефоне.\\nВыбрали стиль → записались → пришли уверенными ✨\\n\\nЭто реально работает. И это бесплатно для теста 🔥\\n\\n👉 ' + TRIAL_BOT_LINK + '\\n🎬 ' + TRIAL_MEDIA_LINK,
 ];
 
 function trialWaScript(phone, name) {
   const n = phone.split('').reduce((a,c) => a + c.charCodeAt(0), 0);
-  return TRIAL_SCRIPTS[n % TRIAL_SCRIPTS.length].replace('{name}', name ? ', ' + name : '');
+  return TRIAL_SCRIPTS[n % TRIAL_SCRIPTS.length]
+    .replace('{name}', name ? ', ' + name : '')
+    .replace('{namePrefix}', name ? name + ', ' : '');
 }
 
 function waContacted(phone) {
@@ -1466,12 +1483,14 @@ export default {
     ctx.waitUntil(pollPendingJobs(env));           // every minute: deliver completed fal.ai jobs
     ctx.waitUntil(checkExpiredSubscriptions(env)); // daily: mark expired, notify owners
     ctx.waitUntil(resetMonthlyGenerations(env));   // 1st of month: reset monthly counters
+    ctx.waitUntil(sendTrialReminders(env));        // every minute: send 24h follow-up to trials
     // Once per day at 10:00 UTC
     const h = new Date().getUTCHours();
     const m = new Date().getUTCMinutes();
     if (h === 10 && m < 2) {
       ctx.waitUntil(checkFalBudget(env));
       ctx.waitUntil(checkExpiringSubscriptions(env));
+      ctx.waitUntil(notifyExpiringTrials(env));
     }
   },
 };
@@ -1613,6 +1632,108 @@ async function resetMonthlyGenerations(env) {
       `Хотите продлить или сменить тариф? Нажмите кнопку *📋 Тариф*`
     );
     console.log(`[cron] reset monthly count for salon ${salon.id}, next reset: ${nextResetStr}`);
+  }
+}
+
+// ─── Cron: send 24-hour follow-up reminder to unconverted trial salons ────────
+async function sendTrialReminders(env) {
+  const adminToken = env.ADMIN_BOT_TOKEN ?? env.STANDARD_BOT_TOKEN;
+  if (!adminToken) return;
+
+  const { results } = await env.beauty_ai_db
+    .prepare(`
+      SELECT id, admin_chat_id, salon_name, name, monthly_generations_count
+      FROM salons
+      WHERE status = 'trial'
+        AND admin_chat_id != '0'
+        AND trial_reminder_sent = 0
+        AND created_at <= datetime('now', '-24 hours')
+    `)
+    .all();
+
+  for (const salon of results) {
+    const displayName = salon.salon_name || salon.name || 'Ваш салон';
+    const triedDemo   = (salon.monthly_generations_count ?? 0) > 0;
+
+    const text = triedDemo
+      ? `👋 Как вам демо Beauty AI?\n\n` +
+        `Надеемся, что примерка причёсок вас впечатлила ✨\n\n` +
+        `Клиенты которые видят себя с новой причёской *до* записи — приходят увереннее и реже отменяют. 🔥\n\n` +
+        `Готовы подключить *${displayName}*? Выберите тариф ниже 👇`
+      : `👋 Привет! Вы зарегистрировали демо Beauty AI, но ещё не пробовали.\n\n` +
+        `Попробуйте прямо сейчас — отправьте себе фото и примерьте причёску 📸\n\n` +
+        `Или сразу выберите тариф и подключайте клиентов 👇`;
+
+    try {
+      await sendMessage(adminToken, String(salon.admin_chat_id), text, {
+        inline_keyboard: [
+          [
+            { text: '🟢 Мини · ₸14,900',     callback_data: 'b2b_pkg_mini_shared' },
+            { text: '🔵 Стандарт · ₸24,900', callback_data: 'b2b_pkg_std_shared'  },
+          ],
+          [
+            { text: '🟣 Бизнес · ₸39,900',   callback_data: 'b2b_pkg_biz_shared'  },
+            { text: '⭐ Сеть · ₸69,900',     callback_data: 'b2b_pkg_net_shared'  },
+          ],
+          [{ text: '🤖 Хочу свой бот (+₸25,000)', callback_data: 'b2b_hosting_own' }],
+        ],
+      });
+
+      await env.beauty_ai_db
+        .prepare('UPDATE salons SET trial_reminder_sent = 1 WHERE id = ?')
+        .bind(salon.id).run();
+
+      console.log(`[reminder] sent to salon ${salon.id} (${displayName}), tried=${triedDemo}`);
+    } catch (err) {
+      console.error(`[reminder] failed for salon ${salon.id}:`, err.message);
+    }
+  }
+}
+
+// ─── Daily: warn trial owners whose 3-day period expires tomorrow ─────────────
+async function notifyExpiringTrials(env) {
+  const adminToken = env.ADMIN_BOT_TOKEN ?? env.STANDARD_BOT_TOKEN;
+  if (!adminToken) return;
+
+  const { results } = await env.beauty_ai_db
+    .prepare(`
+      SELECT id, admin_chat_id, salon_name, name, monthly_generations_count,
+             max_allowed_generations, trial_expires_at
+      FROM salons
+      WHERE status = 'trial'
+        AND admin_chat_id != '0'
+        AND trial_expires_at BETWEEN datetime('now') AND datetime('now', '+25 hours')
+    `)
+    .all();
+
+  for (const salon of results) {
+    const displayName = salon.salon_name || salon.name || 'Ваш салон';
+    const used        = salon.monthly_generations_count ?? 0;
+    const total       = salon.max_allowed_generations ?? 18;
+    const left        = Math.max(0, total - used);
+
+    try {
+      await sendMessage(adminToken, String(salon.admin_chat_id),
+        `⏰ *Завтра заканчивается бесплатный период Beauty AI!*\n\n` +
+        `Осталось: *${left} из ${total}* генераций · истекает через ~24 ч\n\n` +
+        `Чтобы не терять клиентов — подключите тариф прямо сейчас 👇`,
+        {
+          inline_keyboard: [
+            [
+              { text: '🟢 Мини · ₸14,900',     callback_data: 'b2b_pkg_mini_shared' },
+              { text: '🔵 Стандарт · ₸24,900', callback_data: 'b2b_pkg_std_shared'  },
+            ],
+            [
+              { text: '🟣 Бизнес · ₸39,900',   callback_data: 'b2b_pkg_biz_shared'  },
+              { text: '⭐ Сеть · ₸69,900',     callback_data: 'b2b_pkg_net_shared'  },
+            ],
+          ],
+        }
+      );
+      console.log(`[trial-expiry] warned salon ${salon.id} (${displayName}), expires ${salon.trial_expires_at}`);
+    } catch (err) {
+      console.error(`[trial-expiry] failed for salon ${salon.id}:`, err.message);
+    }
   }
 }
 
@@ -1792,6 +1913,12 @@ function isMonthlyLimitReached(salon) {
   return max > 0 && used >= max;
 }
 
+function isTrialExpired(salon) {
+  if (salon.status !== 'trial') return false;
+  if (!salon.trial_expires_at) return false;
+  return new Date(salon.trial_expires_at + 'Z') < new Date();
+}
+
 // Tariff selection keyboard — reused in multiple flows.
 function ownerMenuKeyboard() {
   return {
@@ -1841,9 +1968,7 @@ async function sendQrCode(botToken, chatId, url) {
 // prefix determines which callback handler receives the tap (b2b_type | trial_type | sedit_type)
 function salonTypeKeyboard(prefix) {
   return { inline_keyboard: [
-    [{ text: '✂️ Барбершоп / Стрижки',     callback_data: `${prefix}_barber` }],
-    [{ text: '💄 Макияж / Студия красоты', callback_data: `${prefix}_makeup` }],
-    [{ text: '💅 Ногти / Маникюр',          callback_data: `${prefix}_nails`  }],
+    [{ text: '💇 Салон красоты / Барбершоп', callback_data: `${prefix}_barber` }],
   ]};
 }
 
@@ -1946,7 +2071,10 @@ async function handleUpdate(update, salon, env) {
       if (message.text === '/push' || message.text === '📢 Рассылка') {
         await setState(env, userId, botToken, S.SALON_PUSH_TEXT, {});
         await sendMessage(botToken, chatId,
-          '📢 *Рассылка клиентам*\n\nНапиши текст сообщения которое получат все клиенты:',
+          '📢 *Рассылка клиентам*\n\n' +
+          'Отправьте сообщение всем клиентам которые когда-либо пользовались вашим ботом.\n' +
+          'Используйте для акций, новинок или напоминаний о записи.\n\n' +
+          'Напишите текст сообщения:',
           { remove_keyboard: true }
         );
         return;
@@ -1959,18 +2087,25 @@ async function handleUpdate(update, salon, env) {
           await sendMessage(botToken, chatId, '❌ У вашего салона нет ссылки для клиентов.');
           return;
         }
+        await sendMessage(botToken, chatId,
+          `📷 *QR-код для клиентов*\n\n` +
+          `Распечатайте и разместите в салоне — на зеркале, стойке или визитках.\n` +
+          `Клиент сканирует → сразу открывается бот → примеряет причёску → записывается к вам.\n\n` +
+          `Также можно добавить ссылку в шапку Instagram или отправить клиентам в WhatsApp.`
+        );
         await sendQrCode(botToken, chatId, `https://t.me/${botUsername}?start=${slug}`);
         return;
       }
 
       if (message.text === '/settings' || message.text === '⚙️ Настройки') {
-        const curMax = salon.max_images ?? 3;
+        const curMax  = salon.max_images ?? 3;
+        const curDisc = salon.discount ? `${salon.discount}%` : 'нет';
         await sendMessage(botToken, chatId, '⚙️ *Настройки салона*\n\nЧто изменить?', {
           inline_keyboard: [
-            [{ text: '✏️ Название',                       callback_data: 'sedit_name'  }],
-            [{ text: '📱 WhatsApp',                       callback_data: 'sedit_phone' }],
-            [{ text: '🏷️ Тип салона',                    callback_data: 'sedit_type'  }],
-            [{ text: `🎯 Примерок на клиента: ${curMax}`, callback_data: 'sedit_max'   }],
+            [{ text: '✏️ Название',                          callback_data: 'sedit_name'  }],
+            [{ text: '📱 WhatsApp',                          callback_data: 'sedit_phone' }],
+            [{ text: `🎯 Примерок на клиента: ${curMax}`,    callback_data: 'sedit_max'   }],
+            [{ text: `🎁 Скидка для клиентов: ${curDisc}`,   callback_data: 'sedit_disc'  }],
           ],
         });
         return;
@@ -1999,7 +2134,9 @@ async function handleUpdate(update, salon, env) {
       if (message.text === '💬 Поддержка') {
         const supportLink = env.SUPPORT_TG_LINK ?? 'https://t.me/BeautyAI_Support';
         await sendMessage(botToken, chatId,
-          `💬 *Поддержка Beauty AI*\n\nЕсли возникли вопросы по тарифу, боту или оплате — напишите нам:\n\n👉 ${supportLink}`
+          `💬 *Поддержка Beauty AI*\n\n` +
+          `Вопросы по тарифу, оплате, настройке бота или как лучше использовать QR-код — пишите нам, ответим быстро:\n\n` +
+          `👉 ${supportLink}`
         );
         return;
       }
@@ -2038,11 +2175,25 @@ async function handleUpdate(update, salon, env) {
     return;
   }
 
-  // ── Block clients: monthly limit exhausted ──
+  // ── Block: trial expired (3 days) or all 18 trial gens used ──
+  const trialBlocked = salon.status === 'trial' && (isTrialExpired(salon) || isMonthlyLimitReached(salon));
+  if (trialBlocked) {
+    const isOwner = String(chatId) === String(salon.admin_chat_id);
+    if (isOwner) {
+      await showB2bTariffSelector(botToken, chatId, env);
+    } else if (message.text === '/start') {
+      await sendMessage(botToken, chatId,
+        '⏸ Бесплатный период этого салона завершён.\nСкоро сервис будет снова доступен!'
+      );
+    }
+    return;
+  }
+
+  // ── Block clients: monthly limit exhausted (paid plans) ──
   if (isMonthlyLimitReached(salon)) {
     if (message.text === '/start') {
       await sendMessage(botToken, chatId,
-        '⏸ Извините, на этот месяц лимит бесплатных примерок в данном салоне исчерпан. ' +
+        '⏸ Извините, на этот месяц лимит примерок в данном салоне исчерпан. ' +
         'Сервис возобновит работу в начале следующего месяца.'
       );
     }
@@ -2226,11 +2377,28 @@ async function handleStandardUpdate(update, env) {
       if ((typeRow?.state ?? '') !== S.B2B_TYPE) return;
       const typeTmp = JSON.parse(typeRow?.temp_data ?? '{}');
       const salonType = cq.data.replace('b2b_type_', '');
-      const typeNames = { barber: 'Барбершоп / Стрижки', makeup: 'Макияж / Студия красоты', nails: 'Ногти / Маникюр' };
+      const typeNames = { barber: 'Салон красоты / Барбершоп', makeup: 'Макияж / Студия красоты', nails: 'Ногти / Маникюр' };
       await setState(env, userId, botToken, S.B2B_PHONE, { ...typeTmp, salon_type: salonType });
       await sendMessage(botToken, chatId,
         `✅ Тип: *${typeNames[salonType] ?? salonType}*\n\n📱 Введите WhatsApp-номер салона (только цифры):\n_Например: 77001112233_`
       );
+      return;
+    }
+
+    // B2B discount selection during onboarding
+    // B2B discount selection during onboarding
+    if (cq.data?.startsWith('b2b_disc_')) {
+      await fetch(`${TELEGRAM_API}/bot${botToken}/answerCallbackQuery`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ callback_query_id: cq.id }),
+      });
+      const discRow = await env.beauty_ai_db
+        .prepare('SELECT state, temp_data FROM user_states WHERE user_id = ? AND bot_token = ?')
+        .bind(userId, botToken).first();
+      if ((discRow?.state ?? '') !== S.B2B_DISCOUNT) return;
+      const discTmp = JSON.parse(discRow?.temp_data ?? '{}');
+      const discVal = parseInt(cq.data.replace('b2b_disc_', '')) || 0;
+      await finishB2bTrialCreation(env, userId, chatId, botToken, discTmp, discVal || null);
       return;
     }
 
@@ -2434,8 +2602,8 @@ async function createTrialSalon(env, name, phone, sourceTrack = 'direct', adminC
       INSERT INTO salons
         (slug, bot_token, status, name, salon_name, salon_type,
          whatsapp_phone, admin_chat_id, max_images, max_allowed_generations,
-         monthly_generations_count, source_track)
-      VALUES (?, ?, 'trial', ?, ?, ?, ?, ?, 3, 3, 0, ?)
+         monthly_generations_count, source_track, trial_expires_at)
+      VALUES (?, ?, 'trial', ?, ?, ?, ?, ?, 3, 18, 0, ?, datetime('now', '+3 days'))
     `)
     .bind(slug, syntheticToken, name, name, salonType, phone,
           adminChatId ? String(adminChatId) : '0', sourceTrack ?? null)
@@ -2456,7 +2624,9 @@ async function handleB2bOnboarding(message, env, userId, chatId, botToken, state
     }
     await setState(env, userId, botToken, S.B2B_PHONE, { ...tempData, b2b_name: text, salon_type: 'barber' });
     await sendMessage(botToken, chatId,
-      `✅ *${text}*\n\n📱 Введите *WhatsApp-номер* для связи с клиентами:\n_(только цифры, например: \`77001112233\`)_`
+      `✅ *${text}*\n\n📱 Введите *номер WhatsApp вашего салона*:\n\n` +
+      `⚠️ _Убедитесь что на этом номере установлен WhatsApp — именно на него будут писать клиенты и вы получите ссылку для рассылки._\n\n` +
+      `_(только цифры, например: \`77001112233\`)_`
     );
     return;
   }
@@ -2470,32 +2640,47 @@ async function handleB2bOnboarding(message, env, userId, chatId, botToken, state
       return;
     }
 
-    const sourceTrack = tempData.source_track ?? 'b2b_direct';
-    const salonType   = tempData.salon_type ?? 'barber';
-    const salon = await createTrialSalon(env, tempData.b2b_name, phone, sourceTrack, userId, salonType);
-
-    await env.beauty_ai_db
-      .prepare('INSERT OR IGNORE INTO users (user_id, bot_token, salon_id, image_count) VALUES (?, ?, ?, 0)')
-      .bind(userId, botToken, salon.id).run();
-    await env.beauty_ai_db
-      .prepare('UPDATE users SET salon_id = ? WHERE user_id = ? AND bot_token = ?')
-      .bind(salon.id, userId, botToken).run();
-
-    const typeHints = {
-      barber: '📸 Пришлите *СЕЛФИ* лица — подберём причёску!',
-      makeup: '📸 Пришлите *ФОТО лица* — подберём макияж!',
-      nails:  '📸 Пришлите *ФОТО рук* ладонями вверх — подберём маникюр!',
-    };
-    const firstStates = { barber: S.WAITING_SELFIE, makeup: S.WAITING_FACE, nails: S.WAITING_HAND };
-
+    await setState(env, userId, botToken, S.B2B_DISCOUNT, { ...tempData, b2b_phone: phone });
     await sendMessage(botToken, chatId,
-      `🎉 *${salon.name}* — тест-драйв запущен!\n\n` +
-      `Вы сейчас увидите то, что увидит ваш клиент когда зайдёт по ссылке от вашего салона.\n` +
-      `Доступно *3 бесплатные примерки*.\n\n` +
-      `${typeHints[salonType] ?? typeHints.barber}`
+      `✅ Номер сохранён!\n\n` +
+      `🎁 *Хотите давать скидку клиентам?*\n\n` +
+      `После примерок клиент увидит кнопку *"Записаться"* — она открывает WhatsApp вашего салона.\n` +
+      `Со скидкой клиенты записываются охотнее — это дополнительный стимул прийти именно к вам.\n\n` +
+      `Выберите размер скидки на первый визит:`,
+      discountKeyboard('b2b_')
     );
-    await setState(env, userId, botToken, firstStates[salonType] ?? S.WAITING_SELFIE, {});
   }
+}
+
+async function finishB2bTrialCreation(env, userId, chatId, botToken, tempData, discount) {
+  const sourceTrack = tempData.source_track ?? 'b2b_direct';
+  const salonType   = tempData.salon_type ?? 'barber';
+  const salon = await createTrialSalon(env, tempData.b2b_name, tempData.b2b_phone, sourceTrack, userId, salonType);
+
+  if (discount) {
+    await env.beauty_ai_db
+      .prepare('UPDATE salons SET discount = ? WHERE id = ?')
+      .bind(discount, salon.id).run();
+  }
+
+  await env.beauty_ai_db
+    .prepare('INSERT OR IGNORE INTO users (user_id, bot_token, salon_id, image_count) VALUES (?, ?, ?, 0)')
+    .bind(userId, botToken, salon.id).run();
+  await env.beauty_ai_db
+    .prepare('UPDATE users SET salon_id = ? WHERE user_id = ? AND bot_token = ?')
+    .bind(salon.id, userId, botToken).run();
+
+  const discLine = discount ? `🎁 Скидка для клиентов: *${discount}%*\n\n` : '';
+  await sendMessage(botToken, chatId,
+    `🎉 *${salon.name}* — тест-драйв запущен!\n\n` +
+    `У вас *3 дня бесплатного доступа:*\n` +
+    `• 3 примерки для вас лично — попробуйте прямо сейчас\n` +
+    `• 15 примерок для ваших клиентов — поделитесь ссылкой\n\n` +
+    discLine +
+    `Сначала пройдите это сами — именно так это увидит ваш клиент 👇\n\n` +
+    `📸 Пришлите *СЕЛФИ* лица — подберём причёску!`
+  );
+  await setState(env, userId, botToken, S.WAITING_SELFIE, {});
 }
 
 // ─── B2B tariff / package selector (shown after trial ends) ──────────────────
@@ -3076,39 +3261,36 @@ async function handleSalonCallback(cq, salon, env) {
   if (data.startsWith('sedit_') && chatId === String(salon.admin_chat_id)) {
     if (data === 'sedit_name') {
       await setState(env, userId, botToken, S.SALON_EDIT_NAME, {});
-      await sendMessage(botToken, chatId, '✏️ Введите *новое название* салона (или /cancel для отмены):');
+      await sendMessage(botToken, chatId,
+        `✏️ *Название салона*\n\n` +
+        `Клиенты видят его в сообщении после примерок когда им предлагают записаться.\n\n` +
+        `Введите новое название (или /cancel для отмены):`
+      );
       return;
     }
     if (data === 'sedit_phone') {
       await setState(env, userId, botToken, S.SALON_EDIT_PHONE, {});
-      await sendMessage(botToken, chatId, '📱 Введите *новый WhatsApp-номер* (только цифры, или /cancel):\n_Например: 77001112233_');
-      return;
-    }
-    if (data === 'sedit_type') {
-      await sendMessage(botToken, chatId, '🏷️ Выберите *тип салона*:', salonTypeKeyboard('sedit_type'));
-      return;
-    }
-    if (data.startsWith('sedit_type_')) {
-      const newType = data.replace('sedit_type_', '');
-      const typeNames = { barber: 'Барбершоп / Стрижки', makeup: 'Макияж / Студия красоты', nails: 'Ногти / Маникюр' };
-      await env.beauty_ai_db
-        .prepare('UPDATE salons SET salon_type = ? WHERE id = ?')
-        .bind(newType, salon.id).run();
-      await sendMessage(botToken, chatId, `✅ Тип обновлён: *${typeNames[newType] ?? newType}*`, ownerMenuKeyboard());
+      await sendMessage(botToken, chatId,
+        `📱 *WhatsApp-номер салона*\n\n` +
+        `На этот номер клиенты будут отправлять сообщение "хочу записаться" после примерок.\n` +
+        `Убедитесь что WhatsApp на этом номере активен.\n\n` +
+        `Введите новый номер (только цифры, или /cancel):\n_Например: 77001112233_`
+      );
       return;
     }
     if (data === 'sedit_max') {
       const cur = salon.max_images ?? 3;
       await sendMessage(botToken, chatId,
-        `🎯 *Лимит примерок на одного клиента*\n\n` +
+        `🎯 *Примерок на одного клиента*\n\n` +
         `Сейчас: *${cur}*\n\n` +
-        `После того как клиент использует все примерки — бот предложит ему записаться в WhatsApp.\n\n` +
-        `Выберите сколько примерок давать каждому клиенту:`,
+        `Это сколько раз один клиент может примерить причёску. После того как лимит заканчивается — бот показывает кнопку "Записаться" в WhatsApp.\n\n` +
+        `Рекомендуем *3* — достаточно чтобы выбрать, и создаёт желание записаться пока интерес горячий.\n\n` +
+        `Выберите количество:`,
         { inline_keyboard: [
           [
             { text: '1', callback_data: 'sedit_max_1' },
             { text: '2', callback_data: 'sedit_max_2' },
-            { text: '3', callback_data: 'sedit_max_3' },
+            { text: '3 ✅', callback_data: 'sedit_max_3' },
           ],
           [
             { text: '5', callback_data: 'sedit_max_5' },
@@ -3128,6 +3310,29 @@ async function handleSalonCallback(cq, salon, env) {
         `✅ Готово! Каждый клиент теперь получает *${newMax}* примерки.`,
         ownerMenuKeyboard()
       );
+      return;
+    }
+    if (data === 'sedit_disc') {
+      const cur = salon.discount ? `${salon.discount}%` : 'не установлена';
+      await sendMessage(botToken, chatId,
+        `🎁 *Скидка для клиентов*\n\n` +
+        `Сейчас: *${cur}*\n\n` +
+        `После примерок клиент видит кнопку "Записаться" — со скидкой он нажимает её охотнее.\n` +
+        `Клиент получает скидку только на первый визит, и только если пришёл через бота.\n\n` +
+        `Выберите размер скидки:`,
+        discountKeyboard('sedit_')
+      );
+      return;
+    }
+    if (data.startsWith('sedit_disc_')) {
+      const newDisc = parseInt(data.replace('sedit_disc_', '')) || 0;
+      await env.beauty_ai_db
+        .prepare('UPDATE salons SET discount = ? WHERE id = ?')
+        .bind(newDisc || null, salon.id).run();
+      const msg = newDisc
+        ? `✅ Скидка *${newDisc}%* установлена! Клиенты увидят её после примерок.`
+        : `✅ Скидка убрана. Клиенты увидят обычную кнопку записи.`;
+      await sendMessage(botToken, chatId, msg, ownerMenuKeyboard());
       return;
     }
     return;
@@ -3209,6 +3414,14 @@ async function handleSalonCallback(cq, salon, env) {
       .bind(userId, botToken).first();
     if ((user?.image_count ?? 0) >= (salon.max_images ?? 3)) {
       await sendOfferMessage(botToken, chatId, salon);
+      return;
+    }
+
+    // Trial expired or gens exhausted
+    if (salon.status === 'trial' && (isTrialExpired(salon) || isMonthlyLimitReached(salon))) {
+      const isOwner = String(chatId) === String(salon.admin_chat_id);
+      if (isOwner) await showB2bTariffSelector(botToken, chatId, env);
+      else await sendMessage(botToken, chatId, '⏸ Бесплатный период этого салона завершён.');
       return;
     }
 
@@ -3549,6 +3762,12 @@ async function submitFluxKontext(imageUrl, prompt, meta, env) {
 
 // ─── Makeup flow (1 photo) ────────────────────────────────────────────────────
 async function handleMakeup(fileUrl, salon, user, env, botToken, chatId, userId, maxImages) {
+  if (salon.status === 'trial' && (isTrialExpired(salon) || isMonthlyLimitReached(salon))) {
+    const isOwner = String(chatId) === String(salon.admin_chat_id);
+    if (isOwner) await showB2bTariffSelector(botToken, chatId, env);
+    else await sendMessage(botToken, chatId, '⏸ Бесплатный период этого салона завершён.');
+    return;
+  }
   if (isMonthlyLimitReached(salon)) {
     await sendMessage(botToken, chatId,
       '⏸ Извините, на этот месяц лимит примерок в этом салоне исчерпан. ' +
@@ -4434,7 +4653,7 @@ async function handleAdminCallback(cq, env) {
   // Admin trial type selection
   if (data.startsWith('trial_type_')) {
     const salonType = data.replace('trial_type_', '');
-    const typeNames = { barber: 'Барбершоп / Стрижки', makeup: 'Макияж / Студия красоты', nails: 'Ногти / Маникюр' };
+    const typeNames = { barber: 'Салон красоты / Барбершоп', makeup: 'Макияж / Студия красоты', nails: 'Ногти / Маникюр' };
     await setAdminState(env, userId, A.CREATE_TRIAL_PHONE, { ...tempData, trial_type: salonType });
     await adminSend(env, chatId,
       `✅ Тип: *${typeNames[salonType] ?? salonType}*\n\n📱 Введи WhatsApp-номер (только цифры):\n_Например: 77001112233_`

@@ -873,14 +873,14 @@ let clientData = [];
 let regChart, statusChart;
 
 const TRIAL_SCRIPTS = [
-  'Здравствуйте! Вы зарегистрировали бота Beauty AI. Ваши клиенты уже могут примерять образы прямо на свои фото. Хотите продолжить после триала? Пишите — расскажем о тарифах.',
-  'Добрый день! Как вам бот Beauty AI? Удалось ли показать клиентам виртуальную примерку? Если есть вопросы или хотите продолжить — пишите, поможем.',
-  'Здравствуйте! Ваш бот Beauty AI готов к работе. Поделитесь ссылкой с клиентами — пусть попробуют примерить образ. Если нужна помощь с запуском — обращайтесь.',
+  'Здравствуйте{name}! 👋\\nВас приветствует компания Beauty 🎀 Ai.\\n\\nМы нашли способ, как салоны в Казахстане получают новых клиентов без таргета и без сторис. 🔥\\n\\nКлиент видит себя с готовой причёской на своём фото — прямо в телефоне. Сам выбирает стиль своей прически, сам принимает решение — и это Магия! ✨\\nВы получаете человека, который уже определился и готов записаться.\\n\\nИспытайте это на себе прямо сейчас — в бесплатном демо-режиме:\\n👉 https://t.me/qrbeatyai_bot?start=b2b',
+  'Здравствуйте{name}! 👋\\nЭто Beauty 🎀 Ai — ИИ-подбор причёсок для салонов Казахстана.\\n\\nМы нашли способ привлекать новых клиентов без таргета и без сторис. 🔥\\n\\nКлиент примеряет стрижку на своё фото прямо в телефоне. Сам выбирает стиль, сам принимает решение — и это Магия! ✨\\nК вам приходит человек, который уже знает чего хочет.\\n\\nПроверьте сами абсолютно бесплатно:\\n👉 https://t.me/qrbeatyai_bot?start=b2b',
+  'Здравствуйте{name}! 👋\\nКомпания Beauty 🎀 Ai — ИИ-сервис для салонов Казахстана.\\n\\nМы нашли способ получать новых клиентов без таргета и без сторис. 🔥\\n\\nВаш клиент видит себя с готовой причёской на своём фото — прямо в телефоне. Сам выбирает стиль, сам принимает решение — Магия! ✨\\nВы получаете человека, который уже определился и готов прийти.\\n\\nУбедитесь сами — бесплатный демо-режим:\\n👉 https://t.me/qrbeatyai_bot?start=b2b',
 ];
 
-function trialWaScript(phone) {
-  const n = phone.replace(/\D/g,'').split('').reduce((a,c) => a + c.charCodeAt(0), 0);
-  return TRIAL_SCRIPTS[n % TRIAL_SCRIPTS.length];
+function trialWaScript(phone, name) {
+  const n = phone.split('').reduce((a,c) => a + c.charCodeAt(0), 0);
+  return TRIAL_SCRIPTS[n % TRIAL_SCRIPTS.length].replace('{name}', name ? ', ' + name : '');
 }
 
 function waContacted(phone) {
@@ -889,9 +889,9 @@ function waContacted(phone) {
   return !!c[phone.replace(/\D/g,'')];
 }
 
-function sendTrialWa(phone, rowKey) {
+function sendTrialWa(phone, rowKey, name) {
   const clean = phone.replace(/\D/g,'');
-  window.open('https://wa.me/' + clean + '?text=' + encodeURIComponent(trialWaScript(clean)), '_blank');
+  window.open('https://wa.me/' + clean + '?text=' + encodeURIComponent(trialWaScript(clean, name||'')), '_blank');
   const c = JSON.parse(localStorage.getItem('wa_sent') || '{}');
   c[clean] = new Date().toISOString().slice(0,10);
   localStorage.setItem('wa_sent', JSON.stringify(c));
@@ -1088,6 +1088,7 @@ async function loadSalons(status, page=1) {
       const link    = s.slug ? \`https://t.me/\${BOT}?start=\${s.slug}\` : null;
       const rowKey  = btoa(s.bot_token).slice(0,8);
       const ctacted = s.whatsapp_phone ? waContacted(s.whatsapp_phone) : false;
+      const safeName = (s.name||s.salon_name||'').replace(/['"\\\\]/g,'');
       return \`<tr id="row_\${rowKey}"\${ctacted?' class="contacted"':''}>
         <td class="num">\${offset+i+1}</td>
         <td>\${TYPE[s.salon_type]??'❓'}</td>
@@ -1097,7 +1098,7 @@ async function loadSalons(status, page=1) {
         <td>\${fmtDate(s.created_at)}</td>
         <td>\${owner}</td>
         <td><div class="actions">
-          \${s.whatsapp_phone ? \`<button class="btn btn-green" onclick="sendTrialWa('\${s.whatsapp_phone}','\${rowKey}')" title="Написать в WA с готовым скриптом">📤\${ctacted?'<span class=\\"sent-mark\\"> ✓</span>':''}</button>\` : ''}
+          \${s.whatsapp_phone ? \`<button class="btn btn-green" onclick="sendTrialWa('\${s.whatsapp_phone}','\${rowKey}','\${safeName}')" title="Написать в WA с готовым скриптом">📤\${ctacted?'<span class=\\"sent-mark\\"> ✓</span>':''}</button>\` : ''}
           \${s.admin_chat_id && s.admin_chat_id !== '0' ? \`<button class="btn btn-gray" onclick="unlinkOwner('\${s.bot_token}',this)">🔓</button>\` : ''}
           <button class="btn btn-red" onclick="deleteSalon('\${s.bot_token}',this)">🗑</button>
         </div></td>

@@ -108,6 +108,7 @@
   .v-a { background: #dbeafe; color: #1d4ed8; }
   .v-b { background: #fce7f3; color: #9d174d; }
   .v-c { background: #d1fae5; color: #065f46; }
+  .v-csv { background: #ede9fe; color: #6d28d9; }
 
   .send-btn {
     background: #25d366;
@@ -292,41 +293,70 @@ document.getElementById('csvFile').addEventListener('change', function(e) {
   reader.readAsText(file, 'UTF-8');
 });
 
+function parseCsvText(text) {
+  // Handles quoted fields with newlines and semicolons inside
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"' && text[i+1] === '"') { field += '"'; i++; }
+      else if (ch === '"') { inQuotes = false; }
+      else { field += ch; }
+    } else {
+      if (ch === '"') { inQuotes = true; }
+      else if (ch === ';' || ch === ',') { row.push(field.trim()); field = ''; }
+      else if (ch === '\n') {
+        row.push(field.trim()); field = '';
+        if (row.some(f => f)) rows.push(row);
+        row = [];
+      } else if (ch === '\r') { /* skip */ }
+      else { field += ch; }
+    }
+  }
+  if (field.trim() || row.length) { row.push(field.trim()); if (row.some(f => f)) rows.push(row); }
+  return rows;
+}
+
 function parseCSV(text) {
-  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const rows = parseCsvText(text);
   contacts = [];
 
-  for (const line of lines) {
-    const parts = line.split(/[,;|\t]/);
+  let startRow = 0;
+  let nameCol = 0, phoneCol = 1, scriptCol = 3;
 
-    // Find which column contains the phone number
-    let phoneIdx = -1;
-    for (let i = 0; i < parts.length; i++) {
-      const digits = parts[i].replace(/\D/g, '');
-      if (digits.length >= 10) { phoneIdx = i; break; }
+  // Detect header row (no phone number in it)
+  if (rows.length && !/\d{10,}/.test(rows[0].join(''))) {
+    startRow = 1;
+    rows[0].forEach((h, i) => {
+      const hl = h.toLowerCase();
+      if (/телефон|phone/.test(hl))          phoneCol  = i;
+      else if (/назван|name|салон/.test(hl)) nameCol   = i;
+      else if (/скрипт|текст|сообщени/.test(hl)) scriptCol = i;
+    });
+  }
+
+  for (let ri = startRow; ri < rows.length; ri++) {
+    const parts = rows[ri];
+
+    // Find phone in any column
+    let phone = '';
+    for (const p of parts) {
+      const d = p.replace(/\D/g, '');
+      if (d.length >= 10) { phone = d; break; }
     }
-    if (phoneIdx === -1) continue; // no phone found — skip header or bad row
-
-    let phone = parts[phoneIdx].replace(/\D/g, '');
-    // Normalize to 7xxxxxxxxxx
+    if (!phone) continue;
     if (phone.length === 10) phone = '7' + phone;
     if (phone.startsWith('8')) phone = '7' + phone.slice(1);
     if (phone.length < 11) continue;
 
-    // Name: first non-phone, non-url column
-    let name = '';
-    for (let i = 0; i < parts.length; i++) {
-      if (i === phoneIdx) continue;
-      const val = parts[i].trim();
-      if (!val || val.startsWith('http') || /^\d+$/.test(val)) continue;
-      name = val;
-      break;
-    }
+    const name   = (parts[nameCol]   || '').trim();
+    const script = (parts[scriptCol] || '').trim();
 
-    contacts.push({ phone, name });
+    contacts.push({ phone, name, script });
   }
 
-  if (contacts.length === 0) {
+  if (!contacts.length) {
     alert('Не найдено номеров. Проверьте формат файла.');
     return;
   }
@@ -344,7 +374,10 @@ function renderList() {
   list.innerHTML = '';
 
   contacts.forEach((c, i) => {
-    const variantIdx = i % 3;
+    const hasCsvScript = !!c.script;
+    const variantIdx   = i % 3;
+    const badgeLabel   = hasCsvScript ? '📋 Скрипт CSV' : 'Вариант ' + VARIANT_LABELS[variantIdx];
+    const badgeClass   = hasCsvScript ? 'v-csv' : VARIANT_CLASSES[variantIdx];
     const card = document.createElement('div');
     card.className = 'contact-card' + (sentSet.has(i) ? ' sent' : '');
     card.id = 'card-' + i;
@@ -354,7 +387,7 @@ function renderList() {
         <div class="contact-phone">${formatPhone(c.phone)}</div>
         ${c.name ? `<div class="contact-name">${c.name}</div>` : ''}
       </div>
-      <div class="variant-badge ${VARIANT_CLASSES[variantIdx]}">Вариант ${VARIANT_LABELS[variantIdx]}</div>
+      <div class="variant-badge ${badgeClass}">${badgeLabel}</div>
       <button class="send-btn${sentSet.has(i) ? ' done' : ''}" id="btn-${i}" onclick="sendMsg(${i})">
         ${sentSet.has(i) ? '✓ Отправлено' : '💬 Написать'}
       </button>
@@ -365,9 +398,17 @@ function renderList() {
 
 function sendMsg(i) {
   const c = contacts[i];
-  const variantIdx = i % 3;
-  const text = SCRIPTS[variantIdx](c.name || '');
-  const url  = `https://wa.me/${c.phone}?text=${encodeURIComponent(text)}`;
+  let text;
+  if (c.script) {
+    text = c.script;
+    // Append bot link if missing from CSV script
+    if (!text.includes('t.me/') && !text.includes('http')) {
+      text = text.trimEnd() + '\n' + B2B_LINK;
+    }
+  } else {
+    text = SCRIPTS[i % 3](c.name || '');
+  }
+  const url = `https://wa.me/${c.phone}?text=${encodeURIComponent(text)}`;
   window.open(url, '_blank');
 
   // Mark as sent after 2 sec (time to switch to WhatsApp)
